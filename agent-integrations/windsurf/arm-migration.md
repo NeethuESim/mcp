@@ -1,4 +1,4 @@
-<!-- Place this prompt file at .windsurf/workflows/arm-migration.md in the workspace root to enable it. 
+<!-- Place this prompt file at .windsurf/workflows/arm-migration.md in the workspace root to enable it.
      Invoke using /arm-migration in the cascade chat.
 -->
 

@@ -43,4 +43,5 @@ jobs:
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:embeddings-${{ env.BUILD_DATE }}
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:embeddings-latest
           build-args: |
+            # mcp-embedding-base is an upstream public image on Docker Hub that does not require authentication
             EMBEDDING_BASE_IMAGE=armlimited/arm-mcp:mcp-embedding-base

@@ -179,7 +179,7 @@ After updating the configuration, restart your MCP client to load the Arm MCP se
 
 ## Logging
 
-By default, the server creates two log files in `/workspace`. With the
+Depending on usage, the server may write two log files under `/workspace`. With the
 configuration examples above, these files appear in the project directory on
 your computer:
 

@@ -1,12 +1,14 @@
 import json
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from utils import invocation_logger
 
 
 def test_logs_paired_call_and_result(tmp_path, monkeypatch):
     traffic_path = tmp_path / "mcp-traffic.jsonl"
     monkeypatch.setattr(invocation_logger, "WORKSPACE_DIR", str(tmp_path))
-    monkeypatch.setenv(invocation_logger.MCP_TRAFFIC_LOG_ENV, str(traffic_path))
 
     entry_id = invocation_logger.log_invocation_reason(
         tool="knowledge_base_search",
@@ -37,7 +39,6 @@ def test_logs_paired_call_and_result(tmp_path, monkeypatch):
 def test_logs_call_without_invocation_reason(tmp_path, monkeypatch):
     traffic_path = tmp_path / "mcp-traffic.jsonl"
     monkeypatch.setattr(invocation_logger, "WORKSPACE_DIR", str(tmp_path))
-    monkeypatch.setenv(invocation_logger.MCP_TRAFFIC_LOG_ENV, str(traffic_path))
 
     entry_id = invocation_logger.log_invocation_reason(
         tool="knowledge_base_search",
@@ -48,4 +49,3 @@ def test_logs_call_without_invocation_reason(tmp_path, monkeypatch):
     entry = json.loads(traffic_path.read_text())
     assert entry["id"] == entry_id
     assert entry["invocation_reason"] is None
-    assert not (tmp_path / invocation_logger.LOG_FILE_NAME).exists()

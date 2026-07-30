@@ -51,7 +51,7 @@ SEARCH_RESOURCES = arm_kb_search.load_search_resources(
     description="If a user asks to migrate a codebase to Arm, strongly consider using this tool as a part of your strategy. Searches an Arm knowledge base of learning resources, Arm intrinsics, and software version compatibility using semantic similarity. Given a natural language query, returns a list of matching resources with URLs, titles, and content snippets, ranked by relevance. Useful for finding documentation, tutorials, or version compatibility for Arm migrations. Returned URLs may include tracking query parameters such as utm_source=arm-mcp and URL fragments. When sharing or citing returned URLs, preserve each URL exactly as returned, including query parameters and fragments; do not remove, normalize, shorten, or rewrite them. Includes 'invocation_reason' parameter so the model can briefly explain why it is calling this tool to provide additional context."
 )
 def knowledge_base_search(query: str, invocation_reason: Optional[str] = None) -> List[Dict[str, Any]]:
-    # Log invocation reason if provided
+    # Log the call and retain its ID for the paired search result.
     entry_id = log_invocation_reason(
         tool="knowledge_base_search",
         reason=invocation_reason,

@@ -18,14 +18,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
-import yaml
-
 from .config import WORKSPACE_DIR
 
 
-LOG_FILE_NAME = "invocation_reasons.yaml"
-MCP_TRAFFIC_LOG_ENV = "MCP_LOG_FILE"
-MCP_TRAFFIC_LOG_DEFAULT = "/workspace/mcp-traffic.jsonl"
+LOG_FILE_NAME = "mcp-traffic.jsonl"
 
 
 def _now_iso() -> str:
@@ -38,32 +34,13 @@ def log_invocation_reason(
     args: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Append a YAML document with the tool invocation reason and metadata to /workspace/invocation_reasons.yaml.
-    Also append a JSONL call entry to MCP_LOG_FILE.
+    Append a JSONL call entry to the workspace traffic log.
 
     Returns the entry ID so the caller can pair the tool result with this invocation.
     Errors are swallowed to avoid impacting tool execution.
     """
     entry_id = str(uuid.uuid4())
     timestamp = _now_iso()
-
-    if reason:
-        entry = {
-            "id": entry_id,
-            "timestamp": timestamp,
-            "tool": tool,
-            "args": args or {},
-            "reason": str(reason),
-        }
-
-        log_path = os.path.join(WORKSPACE_DIR, LOG_FILE_NAME)
-
-        try:
-            os.makedirs(WORKSPACE_DIR, exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as f:
-                yaml.safe_dump(entry, f, explicit_start=True, sort_keys=False, allow_unicode=True)
-        except Exception:
-            pass
 
     traffic_entry = {
         "id": entry_id,
@@ -72,10 +49,10 @@ def log_invocation_reason(
         "args": args or {},
         "invocation_reason": reason,
     }
-    traffic_path = os.environ.get(MCP_TRAFFIC_LOG_ENV, MCP_TRAFFIC_LOG_DEFAULT)
+    log_path = os.path.join(WORKSPACE_DIR, LOG_FILE_NAME)
     try:
-        os.makedirs(os.path.dirname(traffic_path) or WORKSPACE_DIR, exist_ok=True)
-        with open(traffic_path, "a", encoding="utf-8") as f:
+        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(traffic_entry) + "\n")
     except Exception:
         pass
@@ -85,7 +62,7 @@ def log_invocation_reason(
 
 def log_tool_result(entry_id: str, tool: str, result: Any) -> None:
     """Append a JSONL result entry paired with a tool invocation."""
-    traffic_path = os.environ.get(MCP_TRAFFIC_LOG_ENV, MCP_TRAFFIC_LOG_DEFAULT)
+    log_path = os.path.join(WORKSPACE_DIR, LOG_FILE_NAME)
     result_entry = {
         "id": entry_id,
         "type": "result",
@@ -93,8 +70,8 @@ def log_tool_result(entry_id: str, tool: str, result: Any) -> None:
         "result": result,
     }
     try:
-        os.makedirs(os.path.dirname(traffic_path) or WORKSPACE_DIR, exist_ok=True)
-        with open(traffic_path, "a", encoding="utf-8") as f:
+        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(result_entry, default=str) + "\n")
     except Exception:
         pass

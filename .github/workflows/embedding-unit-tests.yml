@@ -9,15 +9,12 @@ on:
       - '.github/workflows/embedding-unit-tests.yml'
   pull_request:
     branches: [main, secure-build]
-    paths:
-      - 'embedding-generation/**'
-      - '.github/workflows/embedding-unit-tests.yml'
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  embedding-unit-tests:
     runs-on: ubuntu-latest
     defaults:
       run:

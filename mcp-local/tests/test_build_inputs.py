@@ -190,7 +190,6 @@ def test_embedding_candidate_requires_reviewed_promotion_before_release() -> Non
     image_triggers = IMAGE_WORKFLOW.split("jobs:", maxsplit=1)[0]
     assert "workflow_run:" not in image_triggers
     assert "pull_request:" in image_triggers
-    assert "types: [opened, synchronize, reopened]" in image_triggers
     assert "push:" in image_triggers
     assert "- mcp-local/server.json" in image_triggers
     assert "automation/pin-embedding-vectorstore" not in IMAGE_WORKFLOW

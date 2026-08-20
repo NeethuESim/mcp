@@ -43,12 +43,16 @@ to consume the newest registry artifact automatically. To promote a candidate:
    09:00 UTC, or start it manually for an out-of-band update.
 2. After publishing the vector store, the workflow opens or updates the
    `automation/pin-embedding-vectorstore` PR with the immutable digest in both
-   `mcp-local/build-inputs.lock.json` and `mcp-local/Dockerfile`.
-3. Review the source revision and image digest.
-4. Merge the PR to trigger the minor MCP release.
+   `mcp-local/build-inputs.lock.json` and `mcp-local/Dockerfile`, along with the
+   next minor version in `mcp-local/server.json`.
+3. Review the source revision, image digest, and proposed version.
+4. Merge the approved PR to publish the MCP release using that exact embedding
+   digest and version.
 
 The workflow does not merge the promotion PR. A candidate can therefore be
 generated, evaluated, and rejected without changing the released MCP image.
+For a major or hotfix release, run **Build MCP Image** manually with the
+corresponding release action; it opens a separate reviewed version PR.
 
 ## Add Documents
 
@@ -99,7 +103,7 @@ Leave the column empty for sources that are chunked from their primary `URL`.
 Install dependencies once:
 
 ```sh
-uv sync --frozen
+uv sync --locked
 ```
 
 Python 3.13 is required.
@@ -107,7 +111,7 @@ Python 3.13 is required.
 Run the full local question eval:
 
 ```sh
-uv run ./run-question-eval.sh
+uv run --locked ./run-question-eval.sh
 ```
 
 That command copies intrinsic chunks from the embedding base image if needed,
@@ -118,16 +122,16 @@ without model network access.
 Useful options:
 
 ```sh
-uv run ./run-question-eval.sh --refresh-intrinsic-chunks
-uv run ./run-question-eval.sh --eval eval_questions.json --top-k 5
-SKIP_DISCOVERY=1 uv run ./run-question-eval.sh
+uv run --locked ./run-question-eval.sh --refresh-intrinsic-chunks
+uv run --locked ./run-question-eval.sh --eval eval_questions.json --top-k 5
+SKIP_DISCOVERY=1 uv run --locked ./run-question-eval.sh
 ```
 
 Run lint and tests with:
 
 ```sh
-uv run ruff check .
-uv run pytest
+uv run --locked ruff check .
+uv run --locked pytest
 ```
 
 To check a new document, add or update a question in `eval_questions.json` with the document URL in `expected_urls`, then run the wrapper. Review `Hit@1`, `Hit@3`, `Hit@5`, `MRR`, and any printed misses before committing the CSV change.

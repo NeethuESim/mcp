@@ -2,7 +2,6 @@ name: Build MCP Image
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
     branches: [main]
     paths:
       - mcp-local/server.json
@@ -298,11 +297,10 @@ jobs:
           SOURCE_SHA: ${{ needs.validate-release.outputs.source_sha }}
         run: |
           set -euo pipefail
-          notes_file="${RUNNER_TEMP}/release-notes.md"
-          printf 'Docker image: `%s:%s`\n\nSource commit: `%s`\n' \
-            "${IMAGE}" "${VERSION}" "${SOURCE_SHA}" > "${notes_file}"
+          notes="$(printf 'Docker image: `%s:%s`\n\nSource commit: `%s`' \
+            "${IMAGE}" "${VERSION}" "${SOURCE_SHA}")"
           gh release create "v${VERSION}" \
             --target "${SOURCE_SHA}" \
             --title "v${VERSION}" \
             --generate-notes \
-            --notes-file "${notes_file}"
+            --notes "${notes}"

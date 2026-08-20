@@ -51,6 +51,13 @@ def update_pin(
     lock = json.loads(lock_file.read_text(encoding="utf-8"))
     embeddings = lock["container_images"]["embeddings"]
     previous_reference = embeddings["reference"]
+
+    # A new workflow run can reproduce the exact image digest. Preserve the
+    # reviewed provenance and release version in that case: there is no new
+    # build input to promote.
+    if reference == previous_reference:
+        return
+
     previous_arg = f"ARG EMBEDDINGS_IMAGE={previous_reference}"
 
     dockerfile_text = dockerfile.read_text(encoding="utf-8")

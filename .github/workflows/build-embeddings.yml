@@ -228,6 +228,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
+      actions: write
       # Required only for pushing the reviewed promotion branch. GitHub token
       # permissions cannot be narrowed to an individual step.
       contents: write
@@ -241,9 +242,6 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          # A bot/App token is required so the generated PR starts required
-          # pull_request checks; events from github.token are suppressed.
-          token: ${{ secrets.RELEASE_PR_TOKEN }}
 
       - name: Update checked-in embedding pin and release version
         id: update
@@ -269,7 +267,7 @@ jobs:
       - name: Push promotion branch and open or update PR
         if: ${{ steps.update.outputs.changed == 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.update.outputs.release_version }}
         shell: bash
         run: |
@@ -311,6 +309,8 @@ jobs:
               --title "chore: promote embeddings for ${RELEASE_VERSION}" \
               --body-file "${body_file}"
           fi
+
+          .github/scripts/dispatch-required-pr-checks.sh "${PROMOTION_BRANCH}"
 
           {
             echo "### MCP embedding promotion"

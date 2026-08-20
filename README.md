@@ -467,10 +467,10 @@ embedding, ask the workflow to create a reviewed version PR:
 Manual workflow runs are dry runs: they build both architectures but cannot
 publish images, tags, or releases when `dry-run` is selected.
 
-The repository secret `RELEASE_PR_TOKEN` must contain a GitHub App or bot token
-with repository Contents and Pull requests read/write permissions. The
-generated PRs use this token so GitHub starts the required `pull_request`
-checks; PRs created with the workflow's built-in token do not trigger them.
+Generated PRs use the workflow's short-lived `GITHUB_TOKEN`. Because GitHub
+leaves `pull_request` runs created by that token awaiting manual workflow
+approval, the automation explicitly dispatches the required test workflows
+against the generated branch after opening or updating the PR.
 
 #### Publishing and Pinning the Updated Bundle
 

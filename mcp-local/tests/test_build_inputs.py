@@ -27,6 +27,9 @@ EMBEDDING_WORKFLOW = (
     REPOSITORY / ".github/workflows/build-embeddings.yml"
 ).read_text()
 IMAGE_WORKFLOW = (REPOSITORY / ".github/workflows/build-mcp-image.yml").read_text()
+REQUIRED_CHECK_DISPATCH = (
+    REPOSITORY / ".github/scripts/dispatch-required-pr-checks.sh"
+).read_text()
 INTEGRATION_WORKFLOW = (
     REPOSITORY / ".github/workflows/integration-tests.yml"
 ).read_text()
@@ -211,6 +214,21 @@ def test_manual_release_proposals_support_all_release_types() -> None:
     assert "bump_mcp_version.py" in IMAGE_WORKFLOW
     assert "gh pr create" in IMAGE_WORKFLOW
     assert "gh pr merge" not in IMAGE_WORKFLOW
+    assert "RELEASE_PR_TOKEN" not in IMAGE_WORKFLOW
+    assert "dispatch-required-pr-checks.sh" in IMAGE_WORKFLOW
+
+
+def test_generated_prs_dispatch_required_checks_without_an_external_token() -> None:
+    assert "RELEASE_PR_TOKEN" not in EMBEDDING_WORKFLOW
+    assert "actions: write" in IMAGE_WORKFLOW
+    assert "actions: write" in EMBEDDING_WORKFLOW
+    assert "dispatch-required-pr-checks.sh" in EMBEDDING_WORKFLOW
+    for workflow in (
+        "integration-tests.yml",
+        "embedding-unit-tests.yml",
+        "scorecard.yml",
+    ):
+        assert workflow in REQUIRED_CHECK_DISPATCH
 
 
 def test_version_bump_script_supports_all_release_types() -> None:

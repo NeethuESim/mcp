@@ -39,6 +39,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_action != 'dry-run' }}
     runs-on: ubuntu-24.04
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -47,15 +48,12 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          # A bot/App token is required so the generated PR starts required
-          # pull_request checks; events from github.token are suppressed.
-          token: ${{ secrets.RELEASE_PR_TOKEN }}
 
       - name: Open or update reviewed version PR
         shell: bash
         env:
           BUMP_TYPE: ${{ inputs.release_action }}
-          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           branch="automation/release-${BUMP_TYPE}"
@@ -88,6 +86,8 @@ jobs:
               --title "chore: propose ${BUMP_TYPE} release ${version}" \
               --body "${body}"
           fi
+
+          .github/scripts/dispatch-required-pr-checks.sh "${branch}"
 
           {
             echo "### Reviewed release proposal"

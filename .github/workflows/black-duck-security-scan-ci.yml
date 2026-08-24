@@ -22,7 +22,7 @@ on:
 permissions: read-all
 
 concurrency:
-  group: blackduck-${{ github.head_ref || github.run_id }}
+  group: blackduck-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

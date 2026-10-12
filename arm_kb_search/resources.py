@@ -26,10 +26,11 @@ from .filters import MetadataFilterIndex, SearchFilters
 from .loaders import load_metadata, load_usearch_index
 from .response import add_disclaimer_to_arm_results, add_utm_source_to_results
 from .search import (
+    LEXICAL_PREPASS_DEPTH,
     build_bm25_index,
-    deduplicate_urls,
     deduplication_candidate_count,
     hybrid_search,
+    tokenize_for_search,
 )
 
 
@@ -131,18 +132,34 @@ def search(
     if eligible_ids == ():
         return []
     resolved_k = k or resources.default_k
+    if not tokenize_for_search(query):
+        return []
+
     candidate_depth = max(resolved_k * 20, 100)
-    search_results = hybrid_search(
-        query,
-        resources.usearch_index,
-        resources.metadata,
-        resources.embedding_model,
-        resources.bm25_index,
-        k=deduplication_candidate_count(resolved_k),
-        candidate_depth=candidate_depth,
-        eligible_ids=eligible_ids,
+
+    def ranked_candidates(pool_size: int) -> list[dict[str, Any]]:
+        return hybrid_search(
+            query,
+            resources.usearch_index,
+            resources.metadata,
+            resources.embedding_model,
+            resources.bm25_index,
+            k=pool_size,
+            candidate_depth=max(candidate_depth, pool_size),
+            eligible_ids=eligible_ids,
+        )
+
+    pool_size = deduplication_candidate_count(resolved_k)
+    search_results = ranked_candidates(pool_size)
+    expanded_pool_size = min(LEXICAL_PREPASS_DEPTH, pool_size * 4)
+    can_expand = (
+        len(search_results) >= pool_size
+        or (len(eligible_ids) if eligible_ids is not None else len(resources.metadata))
+        > max(candidate_depth, pool_size)
     )
-    deduped = deduplicate_urls(search_results)[:resolved_k]
+    if len(search_results) < resolved_k and can_expand and expanded_pool_size > pool_size:
+        search_results = ranked_candidates(expanded_pool_size)
+
     formatted = [
         {
             "url": item["metadata"].get("url"),
@@ -156,7 +173,7 @@ def search(
             "distance": item.get("distance"),
             "score": item.get("rerank_score", item.get("rrf_score")),
         }
-        for item in deduped
+        for item in search_results[:resolved_k]
     ]
     formatted = add_utm_source_to_results(formatted, resources.utm_source)
     if resources.include_disclaimers:

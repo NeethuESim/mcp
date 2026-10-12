@@ -15,32 +15,28 @@
 
 ## Process flow
 
-```mermaid
-flowchart TD
-    A[Open or update fork PR] --> B[Source PR check fails]
-    B --> C{Trusted author and actor?}
-    C -- Yes --> D[Authorize SHA automatically]
-    C -- No --> E[Maintainer reviews SHA]
-    E --> F[Run manual promotion]
-    D --> G[Validate reviewed revision]
-    F --> G
-    G --> H[Create immutable internal PR]
-    H --> I[Verify pinned branch]
-    I --> J[Archive tracked Git blobs]
-    J --> K[Run Black Duck]
-    K --> L{Changes requested?}
-    L -- Yes --> M[Contributor pushes new SHA]
-    L -- No --> N[Merge internal PR]
-    N --> O{Source at merged SHA?}
-    O -- No --> P[Keep source PR open]
-    O -- Yes --> Q[Close source PR]
-    Q --> R{New SHA raced finalization?}
-    R -- Yes --> S[Reopen source PR]
-    R -- No --> T[Lifecycle complete]
-    M --> U[Repeat authorization and promotion]
-    P --> U
-    S --> U
-```
+- A contributor opens or updates a fork pull request. Its Black Duck check
+  fails intentionally and directs reviewers to use the promoted internal pull
+  request.
+- The exact fork head SHA is authorized:
+  - If both the author and triggering user are trusted, authorization and
+    promotion are automatic.
+  - Otherwise, a maintainer reviews the SHA and runs the manual promotion.
+- The workflow validates the source pull request, reviewed SHA, changed-file
+  list, target branch, and workflow-file restrictions.
+- The workflow creates or reopens an immutable internal pull request and closes
+  older open, unmerged promotions as superseded.
+- The Black Duck job verifies that the promoted branch remains pinned, archives
+  every tracked Git blob, and scans the inert archive.
+- If changes are requested, the contributor pushes a new SHA to the original
+  fork pull request and the authorization and promotion process repeats.
+- After the final internal pull request merges:
+  - If the source still points to the merged SHA, the workflow closes the
+    original fork pull request.
+  - If the source already points to a newer SHA, it remains open for another
+    authorization and promotion cycle.
+  - If a newer SHA races the close operation, reconciliation reopens the source
+    pull request and starts another authorization and promotion cycle.
 
 Fork pull requests cannot access the Black Duck credentials stored in `arm/mcp`.
 The `Manage reviewed fork pull request` workflow copies an exact fork revision

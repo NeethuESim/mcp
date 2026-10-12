@@ -16,27 +16,28 @@
 ## Process flow
 
 ```mermaid
+%%{init: {"themeVariables": {"fontSize": "12px"}}}%%
 flowchart TD
-    A["Contributor opens or updates a fork PR"]
-    A -.-> G["Black Duck check fails on the source PR<br/>and directs reviewers to the promoted PR"]
-    A --> B{"Are the author and triggering user trusted?"}
-    B -- Yes --> C["Automatically authorize the exact head SHA"]
-    B -- No --> D["Maintainer reviews the exact head SHA"]
+    A["Open or update a fork PR"]
+    A --> G["Source PR check fails<br/>Review the promoted PR"]
+    G --> B{"Are the author and actor trusted?"}
+    B -- Yes --> C["Auto-authorize the exact SHA"]
+    B -- No --> D["Maintainer reviews the exact SHA"]
     D --> E["Run manual promotion"]
-    C --> F["Validate the PR, SHA, file list,<br/>target, and workflow restrictions"]
+    C --> F["Validate PR, SHA, files,<br/>target, and workflow rules"]
     E --> F
-    F --> H["Create or reopen the immutable internal PR<br/>and supersede older open promotions"]
-    H --> I["Verify the promoted branch remains pinned"]
-    I --> J["Build an inert ZIP from every Git blob<br/>and run Black Duck"]
-    J --> K{"Are changes requested?"}
-    K -- Yes --> L["Contributor pushes a new SHA<br/>to the original fork PR"]
+    F --> H["Create or reopen immutable internal PR<br/>Close older open promotions"]
+    H --> I["Verify the branch remains pinned"]
+    I --> J["Archive every Git blob<br/>Run Black Duck"]
+    J --> K{"Changes requested?"}
+    K -- Yes --> L["Push a new SHA to the fork PR"]
     L --> B
     K -- No --> M["Merge the internal PR"]
-    M --> N{"Does the source still point<br/>to the merged SHA?"}
-    N -- Yes --> O["Close the original fork PR"]
-    N -- No --> P["Keep the source PR open<br/>for the newer revision"]
-    O --> Q{"Did a newer SHA race finalization?"}
-    Q -- Yes --> R["Reopen the source PR through<br/>synchronize reconciliation"]
+    M --> N{"Source still at the merged SHA?"}
+    N -- Yes --> O["Close the source PR"]
+    N -- No --> P["Keep the source PR open"]
+    O --> Q{"Did a new SHA race finalization?"}
+    Q -- Yes --> R["Reopen the source PR<br/>Reconcile the synchronize event"]
     Q -- No --> S["Lifecycle complete"]
     P --> B
     R --> B

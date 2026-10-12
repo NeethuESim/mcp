@@ -1,5 +1,47 @@
 # Fork pull request promotion
 
+## Summary
+
+- Promotes an exact, reviewed fork commit into an immutable same-repository
+  branch and pull request where credentialed Black Duck checks can run safely.
+- Automatically promotes revisions when both the contributor and triggering
+  user are trusted; all other revisions require one explicit maintainer
+  approval.
+- Keeps the original fork pull request as the canonical discussion thread and
+  closes it only after its matching internal pull request merges.
+- Uses SHA pinning, App-authenticated lifecycle markers, and event-driven
+  reconciliation to protect against stale revisions, spoofed comments, and
+  concurrent updates.
+
+## Process flow
+
+```mermaid
+flowchart TD
+    A["Contributor opens or updates a fork PR"]
+    A -.-> G["Black Duck check fails on the source PR<br/>and directs reviewers to the promoted PR"]
+    A --> B{"Are the author and triggering user trusted?"}
+    B -- Yes --> C["Automatically authorize the exact head SHA"]
+    B -- No --> D["Maintainer reviews the exact head SHA"]
+    D --> E["Run manual promotion"]
+    C --> F["Validate the PR, SHA, file list,<br/>target, and workflow restrictions"]
+    E --> F
+    F --> H["Create or reopen the immutable internal PR<br/>and supersede older open promotions"]
+    H --> I["Verify the promoted branch remains pinned"]
+    I --> J["Build an inert ZIP from every Git blob<br/>and run Black Duck"]
+    J --> K{"Are changes requested?"}
+    K -- Yes --> L["Contributor pushes a new SHA<br/>to the original fork PR"]
+    L --> B
+    K -- No --> M["Merge the internal PR"]
+    M --> N{"Does the source still point<br/>to the merged SHA?"}
+    N -- Yes --> O["Close the original fork PR"]
+    N -- No --> P["Keep the source PR open<br/>for the newer revision"]
+    O --> Q{"Did a newer SHA race finalization?"}
+    Q -- Yes --> R["Reopen the source PR through<br/>synchronize reconciliation"]
+    Q -- No --> S["Lifecycle complete"]
+    P --> B
+    R --> B
+```
+
 Fork pull requests cannot access the Black Duck credentials stored in `arm/mcp`.
 The `Manage reviewed fork pull request` workflow copies an exact fork revision
 to a SHA-addressed branch in `arm/mcp` and opens an internal pull request where
@@ -21,10 +63,11 @@ write-level access. The maintainer's explicit review authorizes that exact SHA.
 Each value above is used for both the SHA-addressed internal branch and the
 internal pull request title. The required Black Duck check verifies that the
 branch head still matches the SHA encoded in its name before checking out code
-or exposing credentials. Configure the stable `Black Duck security scan` job
-as a required check for `main`. GitHub's **Update branch** operation and manual
-branch updates deliberately invalidate the check; do not merge or update a
-promoted branch that fails it.
+or exposing credentials. Configure the stable
+`CI Black Duck security scan / Black Duck security scan` context as a required
+check for `main`. GitHub's **Update branch** operation and manual branch updates
+deliberately invalidate the check; do not merge or update a promoted branch
+that fails it.
 
 The workflow rejects draft pull requests, stale SHAs, closed pull requests,
 non-fork pull requests, pull requests that do not target `arm/mcp:main`, and
@@ -63,14 +106,20 @@ branch if its head no longer matches the approved SHA.
 
 The scan checks out the exact pull request head and creates a source ZIP from
 the raw contents of every tracked Git blob without running repository code.
-The exporter does not use `git archive`, checkout filters, or contributor-
-controlled `.gitattributes`, so `export-ignore` and `export-subst` cannot omit
-or rewrite reviewed files. Unsupported tree paths fail the job rather than
-producing a partial scan. The scan job has read-only repository permissions and
-receives no token capable of commenting on or changing the pull request. The
-same job exposes the stable `Black Duck security scan` required-check outcome:
-it fails before checkout on an original fork PR, while a same-repository PR
-continues through archive creation and the credentialed scan.
+The inline exporter runs Python in isolated mode (`python3 -I`) and reads Git
+objects with `git ls-tree` and `git cat-file`; it cannot import modules or site
+customizations from the contributor checkout. It does not use `git archive`,
+checkout filters, or contributor-controlled `.gitattributes`, so
+`export-ignore` and `export-subst` cannot omit or rewrite reviewed files.
+Unsupported tree paths fail the job rather than producing a partial scan. The
+scan job has read-only repository permissions and receives no token capable of
+commenting on or changing the pull request.
+
+The same job exposes the stable `Black Duck security scan` required-check
+outcome: it fails before checkout on an original fork PR, while a
+same-repository PR continues through archive creation and the credentialed
+scan. The `Main Push and Scheduled full source scan` job is the separate full
+scan for `main` pushes and scheduled runs; it is not a pull-request merge gate.
 
 When an internal pull request merges, the workflow closes the source pull
 request only if its current head still matches the merged, reviewed SHA. If the
@@ -124,5 +173,6 @@ Automatic promotion uses `pull_request_target`, but the workflow checks out
 only `main` and treats the fork revision strictly as an opaque Git object. It
 never checks out or executes fork content. The organization Actions policy must
 allow `pull_request_target` for this workflow, including the `closed` event used
-to finalize a merged internal pull request. External contributors still use the
-explicit `workflow_dispatch` path after maintainer review.
+to finalize a merged internal pull request, and must allow `workflow_dispatch`
+for explicit maintainer promotion. External contributors use that manual path
+after the maintainer reviews their exact head SHA.

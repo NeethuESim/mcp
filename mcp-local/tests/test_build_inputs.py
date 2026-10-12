@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+from zipfile import ZipFile
 
 import pytest
 import yaml
@@ -616,7 +617,14 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     )
     assert "environment:" not in pr_scan_section
     assert "persist-credentials: false" in pr_scan_section
-    assert "git archive" in pr_scan_section
+    assert "git archive" not in pr_scan_section
+    assert '"git", "ls-tree", "-rz", "--full-tree"' in pr_scan_section
+    assert '["git", "cat-file", "blob", object_id]' in pr_scan_section
+    assert "every file and symlink stored as a Git blob" in pr_scan_section
+    assert "ZIP_DEFLATED" in pr_scan_section
+    assert "Unsupported Git blob mode" in pr_scan_section
+    assert "Unsafe Git tree path" in pr_scan_section
+    assert "Reviewed tree produced an empty source archive" in pr_scan_section
     assert "project_source_archive:" in pr_scan_section
     assert "blackducksca_prcomment_enabled: false" in pr_scan_section
     assert "github_token:" not in pr_scan_section
@@ -627,6 +635,71 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     )[1]
     assert "needs: pull_request_scan" in result_section
     assert "SCAN_RESULT: ${{ needs.pull_request_scan.result }}" in result_section
+
+
+def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    runner_temp = tmp_path / "runner-temp"
+    repository.mkdir()
+    runner_temp.mkdir()
+    (repository / ".gitattributes").write_text(
+        "dependency.lock export-ignore\nsubstituted.txt export-subst\n"
+    )
+    (repository / "dependency.lock").write_text("must be scanned\n")
+    (repository / "substituted.txt").write_text("$Format:%H$\n")
+
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Archive Test",
+            "-c",
+            "user.email=archive-test@example.invalid",
+            "commit",
+            "-qm",
+            "Test archive attributes",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    reviewed_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    archive_script = next(
+        step["run"]
+        for step in workflow["jobs"]["pull_request_scan"]["steps"]
+        if step["name"]
+        == (
+            "Create inert source archive without executing repository code"
+        )
+    )
+
+    subprocess.run(
+        ["bash", "-c", archive_script],
+        cwd=repository,
+        check=True,
+        env={
+            **os.environ,
+            "REVIEWED_SHA": reviewed_sha,
+            "RUNNER_TEMP": str(runner_temp),
+        },
+    )
+
+    with ZipFile(runner_temp / "blackduck-pr-source.zip") as archive:
+        assert set(archive.namelist()) == {
+            ".gitattributes",
+            "dependency.lock",
+            "substituted.txt",
+        }
+        assert archive.read("dependency.lock") == b"must be scanned\n"
+        assert archive.read("substituted.txt") == b"$Format:%H$\n"
 
 
 def test_release_manifest_uses_the_validated_architecture_digests() -> None:

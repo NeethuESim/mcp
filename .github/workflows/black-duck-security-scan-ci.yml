@@ -236,10 +236,85 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${REVIEWED_SHA}"
-          git archive \
-            --format=zip \
-            --output="${RUNNER_TEMP}/blackduck-pr-source.zip" \
-            "${REVIEWED_SHA}"
+          python3 - <<'PY'
+          import os
+          import re
+          import shutil
+          import stat
+          import subprocess
+          from pathlib import Path, PurePosixPath
+          from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+          reviewed_sha = os.environ["REVIEWED_SHA"]
+          if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", reviewed_sha):
+              raise SystemExit("REVIEWED_SHA is not a full commit object ID")
+
+          listing = subprocess.run(
+              ["git", "ls-tree", "-rz", "--full-tree", reviewed_sha],
+              check=True,
+              stdout=subprocess.PIPE,
+          ).stdout
+          records = [record for record in listing.split(b"\0") if record]
+          archive_path = Path(os.environ["RUNNER_TEMP"]) / "blackduck-pr-source.zip"
+          blob_count = 0
+
+          with ZipFile(
+              archive_path,
+              mode="w",
+              compression=ZIP_DEFLATED,
+              allowZip64=True,
+          ) as archive:
+              for record in records:
+                  try:
+                      metadata, raw_path = record.split(b"\t", 1)
+                      mode, object_type, object_id = metadata.decode("ascii").split()
+                      path = raw_path.decode("utf-8")
+                  except (UnicodeDecodeError, ValueError) as error:
+                      raise SystemExit(
+                          "Reviewed tree contains an unsupported entry"
+                      ) from error
+
+                  # Recursive ls-tree output can also contain submodule commits;
+                  # every file and symlink stored as a Git blob is archived here.
+                  if object_type != "blob":
+                      continue
+                  if mode not in {"100644", "100755", "120000"}:
+                      raise SystemExit(f"Unsupported Git blob mode {mode} for {path!r}")
+                  if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", object_id):
+                      raise SystemExit(f"Invalid Git blob object ID for {path!r}")
+
+                  parsed_path = PurePosixPath(path)
+                  if (
+                      not path
+                      or parsed_path.is_absolute()
+                      or any(part in {"", ".", ".."} for part in parsed_path.parts)
+                  ):
+                      raise SystemExit(f"Unsafe Git tree path {path!r}")
+
+                  info = ZipInfo(path)
+                  info.create_system = 3
+                  permissions = int(mode, 8) & 0o777
+                  file_type = stat.S_IFLNK if mode == "120000" else stat.S_IFREG
+                  info.external_attr = (file_type | permissions) << 16
+                  info.compress_type = ZIP_DEFLATED
+
+                  process = subprocess.Popen(
+                      ["git", "cat-file", "blob", object_id],
+                      stdout=subprocess.PIPE,
+                  )
+                  if process.stdout is None:
+                      raise SystemExit(f"Cannot read Git blob for {path!r}")
+                  with archive.open(info, mode="w") as output:
+                      shutil.copyfileobj(process.stdout, output, length=1024 * 1024)
+                  process.stdout.close()
+                  if process.wait() != 0:
+                      raise SystemExit(f"Cannot read Git blob for {path!r}")
+                  blob_count += 1
+
+          if blob_count == 0 or archive_path.stat().st_size == 0:
+              raise SystemExit("Reviewed tree produced an empty source archive")
+          print(f"Archived {blob_count} tracked Git blobs from {reviewed_sha}")
+          PY
 
       - name: Black Duck SCA PR Scan
         id: black-duck-pr-scan

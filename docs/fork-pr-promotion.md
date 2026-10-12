@@ -61,11 +61,15 @@ creates the SHA-addressed `external-contributions/` branch, its Black Duck scan
 starts automatically. The scan's pin guard rejects either type of promoted
 branch if its head no longer matches the approved SHA.
 
-The scan checks out the exact pull request head and creates a source archive
-without running repository code before invoking Black Duck. The scan job has
-read-only repository permissions and receives no token capable of commenting
-on or changing the pull request. A separate credential-free `Black Duck
-security scan` result job exposes the stable required-check outcome.
+The scan checks out the exact pull request head and creates a source ZIP from
+the raw contents of every tracked Git blob without running repository code.
+The exporter does not use `git archive`, checkout filters, or contributor-
+controlled `.gitattributes`, so `export-ignore` and `export-subst` cannot omit
+or rewrite reviewed files. Unsupported tree paths fail the job rather than
+producing a partial scan. The scan job has read-only repository permissions and
+receives no token capable of commenting on or changing the pull request. A
+separate credential-free `Black Duck security scan` result job exposes the
+stable required-check outcome.
 
 When an internal pull request merges, the workflow closes the source pull
 request only if its current head still matches the merged, reviewed SHA. If the

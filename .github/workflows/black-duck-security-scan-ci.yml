@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   source_scan:
-    name: Black Duck source scan
+    name: Main Push and Scheduled full source scan
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
@@ -185,7 +185,7 @@ jobs:
     name: Black Duck security scan
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360 #setting it to maximum allowed time for a job to run, since the build and blackduck scan can take a long time
     permissions:
       contents: read
     env:

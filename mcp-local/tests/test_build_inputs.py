@@ -509,6 +509,10 @@ def test_release_exports_cyclonedx_sboms_and_attaches_them_to_release() -> None:
 
 
 def test_source_scan_exports_cyclonedx_sbom_for_full_scans_only() -> None:
+    workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    assert workflow["jobs"]["source_scan"]["name"] == (
+        "Main and scheduled full source scan"
+    )
     full_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
         "      - name: Black Duck SCA scan", maxsplit=1
     )[1].split("  pull_request_scan:", maxsplit=1)[0]

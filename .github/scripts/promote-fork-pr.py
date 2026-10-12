@@ -36,6 +36,7 @@ WORKFLOW_DIRECTORY = ".github/workflows/"
 MAX_PULL_REQUEST_FILES = 3_000
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
 LOGIN_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+APP_SLUG_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?")
 PROMOTION_SUFFIX_PATTERN = re.compile(
     r"pr-(?P<pull_number>[1-9][0-9]*)-"
     r"(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
@@ -395,23 +396,51 @@ def post_comment_once(
     marker: str,
     body: str,
 ) -> None:
+    app_slug = promotion_app_slug()
     comments = paginated_get(
         api,
         f"/repos/{repository}/issues/{pull_number}/comments",
         {},
     )
-    if any(marker in str(comment.get("body", "")) for comment in comments):
+    if any(
+        is_promotion_app_comment(comment, app_slug)
+        and marker in str(comment.get("body", ""))
+        for comment in comments
+    ):
         return
-    api.post(
+    created = api.post(
         f"/repos/{repository}/issues/{pull_number}/comments",
         {"body": f"{marker}\n{body}"},
     )
+    if not is_promotion_app_comment(created, app_slug):
+        raise RuntimeError(
+            "GitHub did not attribute the comment to the promotion App"
+        )
+
+
+def promotion_app_slug() -> str:
+    """Return the configured GitHub App slug used to authenticate audit comments."""
+    app_slug = os.environ.get("GH_APP_SLUG", "").strip()
+    if not APP_SLUG_PATTERN.fullmatch(app_slug):
+        raise RuntimeError(
+            "GH_APP_SLUG must contain the promotion GitHub App slug"
+        )
+    return app_slug
+
+
+def is_promotion_app_comment(comment: Any, app_slug: str) -> bool:
+    """Return whether GitHub attributes a comment to the configured App."""
+    if not isinstance(comment, dict):
+        return False
+    app = comment.get("performed_via_github_app") or {}
+    return isinstance(app, dict) and app.get("slug") == app_slug
 
 
 def latest_merged_promotion(
     api: GitHubApi, repository: str, source_pull_number: int
 ) -> tuple[int, str, int | None, str] | None:
     """Return the latest verified internal merge recorded on a source PR."""
+    app_slug = promotion_app_slug()
     comments = paginated_get(
         api,
         f"/repos/{repository}/issues/{source_pull_number}/comments",
@@ -420,6 +449,8 @@ def latest_merged_promotion(
     candidates: list[tuple[str, int, str, int | None, str]] = []
     seen: set[int] = set()
     for comment in comments:
+        if not is_promotion_app_comment(comment, app_slug):
+            continue
         for marker in MERGED_PROMOTION_MARKER_PATTERN.finditer(
             str(comment.get("body", ""))
         ):
@@ -431,7 +462,12 @@ def latest_merged_promotion(
             identity = internal_pr_identity(internal, repository)
             if identity is None:
                 continue
-            candidate_source, promoted_sha, _branch, source_repository_id = identity
+            (
+                candidate_source,
+                promoted_sha,
+                _branch,
+                source_repository_id,
+            ) = identity
             if (
                 candidate_source != source_pull_number
                 or promoted_sha != marker.group("sha").lower()

@@ -30,6 +30,14 @@ SPEC.loader.exec_module(PROMOTION)
 
 
 SHA = "a" * 40
+APP_SLUG = "mcp-promotion"
+
+
+def app_comment(body: str) -> dict:
+    return {
+        "body": body,
+        "performed_via_github_app": {"slug": APP_SLUG},
+    }
 
 
 def source_pr(*, sha: str = SHA, draft: bool = False) -> dict:
@@ -264,6 +272,71 @@ def test_missing_collaborator_is_treated_as_external() -> None:
         )
         == "none"
     )
+
+
+def test_comment_idempotency_ignores_contributor_marker_spoofing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "<!-- predictable-marker -->"
+
+    class CommentApi:
+        def __init__(self) -> None:
+            self.created: list[dict] = []
+
+        def get(self, _path: str, _query: dict) -> list[dict]:
+            return [{"body": marker, "performed_via_github_app": None}]
+
+        def post(self, _path: str, payload: dict) -> dict:
+            self.created.append(payload)
+            return app_comment(payload["body"])
+
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
+    api = CommentApi()
+
+    PROMOTION.post_comment_once(api, "arm/mcp", 185, marker, "Canonical body")
+
+    assert api.created == [{"body": f"{marker}\nCanonical body"}]
+
+
+def test_comment_idempotency_trusts_only_the_configured_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "<!-- canonical-marker -->"
+
+    class CommentApi:
+        def get(self, _path: str, _query: dict) -> list[dict]:
+            return [app_comment(f"{marker}\nCanonical body")]
+
+        def post(self, _path: str, _payload: dict) -> None:
+            pytest.fail("the configured App's marker must be idempotent")
+
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
+
+    PROMOTION.post_comment_once(
+        CommentApi(), "arm/mcp", 185, marker, "Canonical body"
+    )
+
+
+def test_comment_creation_requires_configured_app_attribution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CommentApi:
+        def get(self, _path: str, _query: dict) -> list[dict]:
+            return []
+
+        def post(self, _path: str, payload: dict) -> dict:
+            return {"body": payload["body"], "performed_via_github_app": None}
+
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
+
+    with pytest.raises(RuntimeError, match="attribute the comment"):
+        PROMOTION.post_comment_once(
+            CommentApi(),
+            "arm/mcp",
+            185,
+            "<!-- canonical-marker -->",
+            "Canonical body",
+        )
 
 
 def test_replacement_internal_pr_closes_the_superseded_revision(
@@ -617,12 +690,10 @@ def test_synchronize_reconciliation_reopens_a_late_source_update(
         PROMOTION,
         "paginated_get",
         lambda _api, path, _query: [
-            {
-                "body": (
-                    "<!-- fork-promotion-merged: "
-                    f"internal-pr=186 source-sha={SHA} -->"
-                )
-            }
+            app_comment(
+                "<!-- fork-promotion-merged: "
+                f"internal-pr=186 source-sha={SHA} -->"
+            )
         ]
         if path.endswith("/issues/185/comments")
         else [],
@@ -633,6 +704,7 @@ def test_synchronize_reconciliation_reopens_a_late_source_update(
         "post_comment_once",
         lambda _api, _repository, _number, _marker, body: comments.append(body),
     )
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
     api = ReconciliationApi()
 
     assert PROMOTION.reconcile_source_pr(api, "arm/mcp", 185, updated_sha)
@@ -661,14 +733,13 @@ def test_synchronize_reconciliation_keeps_the_merged_revision_closed(
         PROMOTION,
         "paginated_get",
         lambda *_args: [
-            {
-                "body": (
-                    "<!-- fork-promotion-merged: "
-                    f"internal-pr=186 source-sha={SHA} -->"
-                )
-            }
+            app_comment(
+                "<!-- fork-promotion-merged: "
+                f"internal-pr=186 source-sha={SHA} -->"
+            )
         ],
     )
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
 
     assert not PROMOTION.reconcile_source_pr(
         ReconciliationApi(), "arm/mcp", 185, SHA
@@ -696,14 +767,13 @@ def test_synchronize_reconciliation_rejects_a_stale_event(
         PROMOTION,
         "paginated_get",
         lambda *_args: [
-            {
-                "body": (
-                    "<!-- fork-promotion-merged: "
-                    f"internal-pr=186 source-sha={SHA} -->"
-                )
-            }
+            app_comment(
+                "<!-- fork-promotion-merged: "
+                f"internal-pr=186 source-sha={SHA} -->"
+            )
         ],
     )
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
 
     with pytest.raises(ValueError, match="head changed"):
         PROMOTION.reconcile_source_pr(
@@ -730,14 +800,46 @@ def test_synchronize_reconciliation_ignores_an_unmerged_marker(
         PROMOTION,
         "paginated_get",
         lambda *_args: [
+            app_comment(
+                "<!-- fork-promotion-merged: "
+                f"internal-pr=186 source-sha={SHA} -->"
+            )
+        ],
+    )
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
+
+    assert not PROMOTION.reconcile_source_pr(
+        ReconciliationApi(), "arm/mcp", 185, "b" * 40
+    )
+
+
+def test_synchronize_reconciliation_ignores_a_contributor_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReconciliationApi:
+        def get(self, path: str) -> dict:
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr(sha="b" * 40)
+            pull["state"] = "closed"
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("a contributor marker must not reopen the source")
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda *_args: [
             {
                 "body": (
                     "<!-- fork-promotion-merged: "
                     f"internal-pr=186 source-sha={SHA} -->"
-                )
+                ),
+                "performed_via_github_app": None,
             }
         ],
     )
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
 
     assert not PROMOTION.reconcile_source_pr(
         ReconciliationApi(), "arm/mcp", 185, "b" * 40

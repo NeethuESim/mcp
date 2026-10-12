@@ -107,7 +107,11 @@ Configured the repository with:
 
 The App token is used so the internal PR triggers normal `pull_request`
 workflows without the approval-required behavior applied to PRs created by the
-built-in `GITHUB_TOKEN`.
+built-in `GITHUB_TOKEN`. The workflow also passes the App slug reported by the
+token action to the lifecycle helper. Promotion, finalization, and
+reconciliation markers are authoritative only when GitHub reports the comment's
+`performed_via_github_app.slug` as that configured App; contributor-authored
+lookalike markers are ignored.
 
 ## Actions policy
 

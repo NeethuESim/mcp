@@ -567,6 +567,8 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
         FORK_PROMOTION_WORKFLOW
     )
     assert "actions/create-github-app-token@" in FORK_PROMOTION_WORKFLOW
+    assert "outputs.app-slug" in FORK_PROMOTION_WORKFLOW
+    assert "GH_APP_SLUG:" in FORK_PROMOTION_WORKFLOW
     assert "permission-contents: write" in FORK_PROMOTION_WORKFLOW
     assert "permission-pull-requests: write" in FORK_PROMOTION_WORKFLOW
     assert "permission-workflows:" not in FORK_PROMOTION_WORKFLOW
@@ -582,6 +584,7 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "MAX_PULL_REQUEST_FILES = 3_000" in FORK_PROMOTION_SCRIPT
     assert "external-contributions/pr-" in FORK_PROMOTION_SCRIPT
     assert "trusted-fork-{username}/pr-" in FORK_PROMOTION_SCRIPT
+    assert "performed_via_github_app" in FORK_PROMOTION_SCRIPT
     assert "gh pr merge" not in FORK_PROMOTION_WORKFLOW
 
     fork_guard = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(

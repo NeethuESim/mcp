@@ -70,6 +70,7 @@ jobs:
 
       - name: Reconcile and promote exact reviewed fork revision
         env:
+          GH_APP_SLUG: ${{ steps.promotion-token.outputs.app-slug }}
           GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
           EVENT_ACTION: ${{ github.event.action }}
           EVENT_NAME: ${{ github.event_name }}
@@ -132,6 +133,7 @@ jobs:
 
       - name: Close the source PR after its promoted revision merges
         env:
+          GH_APP_SLUG: ${{ steps.finalization-token.outputs.app-slug }}
           GH_TOKEN: ${{ steps.finalization-token.outputs.token }}
           INTERNAL_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: |

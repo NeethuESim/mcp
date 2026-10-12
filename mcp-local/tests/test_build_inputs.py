@@ -573,6 +573,9 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "github.event.pull_request.merged == true" in FORK_PROMOTION_WORKFLOW
     assert "finalize" in FORK_PROMOTION_WORKFLOW
     assert "--internal-pull-number" in FORK_PROMOTION_WORKFLOW
+    assert '"${EVENT_ACTION}" == "synchronize"' in FORK_PROMOTION_WORKFLOW
+    assert "reconcile" in FORK_PROMOTION_WORKFLOW
+    assert '--expected-sha "${EXPECTED_SHA}"' in FORK_PROMOTION_WORKFLOW
     assert "GH_APP_TOKEN" in FORK_PROMOTION_WORKFLOW
     assert "actions/checkout" not in FORK_PROMOTION_SCRIPT
     assert 'WORKFLOW_DIRECTORY = ".github/workflows/"' in FORK_PROMOTION_SCRIPT

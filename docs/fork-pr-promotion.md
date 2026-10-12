@@ -72,7 +72,12 @@ request only if its current head still matches the merged, reviewed SHA. If the
 contributor has already pushed another revision, the source pull request remains
 open and that newer SHA requires separate authorization and promotion. The
 finalization path re-reads the source after closing and restores it to open if a
-concurrent update won the close race.
+concurrent update won the close race. If an update arrives after the final read,
+its trusted `pull_request_target` `synchronize` run verifies the recorded merged
+internal pull request, reopens the source, and then applies the normal
+authorization rules to the new SHA. Trusted authors and triggering users are
+promoted automatically; all other revisions remain open until a maintainer
+manually authorizes that exact SHA.
 
 Promotion also records the fork's immutable GitHub repository ID with the
 source pull request number and reviewed SHA in the internal pull request. If the

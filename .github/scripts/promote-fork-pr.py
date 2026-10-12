@@ -45,6 +45,10 @@ PROMOTION_MARKER_PATTERN = re.compile(
     r"(?: source-sha=(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
     r" source-repo-id=(?P<repository_id>[1-9][0-9]*))? -->"
 )
+MERGED_PROMOTION_MARKER_PATTERN = re.compile(
+    r"<!-- fork-promotion-merged: internal-pr=(?P<internal_number>[1-9][0-9]*)"
+    r" source-sha=(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64}) -->"
+)
 
 
 class ApiError(RuntimeError):
@@ -404,6 +408,54 @@ def post_comment_once(
     )
 
 
+def latest_merged_promotion(
+    api: GitHubApi, repository: str, source_pull_number: int
+) -> tuple[int, str, int | None, str] | None:
+    """Return the latest verified internal merge recorded on a source PR."""
+    comments = paginated_get(
+        api,
+        f"/repos/{repository}/issues/{source_pull_number}/comments",
+        {},
+    )
+    candidates: list[tuple[str, int, str, int | None, str]] = []
+    seen: set[int] = set()
+    for comment in comments:
+        for marker in MERGED_PROMOTION_MARKER_PATTERN.finditer(
+            str(comment.get("body", ""))
+        ):
+            internal_number = int(marker.group("internal_number"))
+            if internal_number in seen:
+                continue
+            seen.add(internal_number)
+            internal = api.get(f"/repos/{repository}/pulls/{internal_number}")
+            identity = internal_pr_identity(internal, repository)
+            if identity is None:
+                continue
+            candidate_source, promoted_sha, _branch, source_repository_id = identity
+            if (
+                candidate_source != source_pull_number
+                or promoted_sha != marker.group("sha").lower()
+                or internal.get("state") != "closed"
+                or not internal.get("merged")
+            ):
+                continue
+            candidates.append(
+                (
+                    str(internal.get("merged_at", "")),
+                    internal_number,
+                    promoted_sha,
+                    source_repository_id,
+                    str(internal.get("html_url", "")),
+                )
+            )
+    if not candidates:
+        return None
+    _merged_at, internal_number, promoted_sha, repository_id, internal_url = max(
+        candidates, key=lambda candidate: (candidate[0], candidate[1])
+    )
+    return internal_number, promoted_sha, repository_id, internal_url
+
+
 def comment_on_source_pr(
     api: GitHubApi,
     repository: str,
@@ -556,6 +608,71 @@ def validate_source_pr_for_finalization(
     return source_sha, str(pull.get("state", ""))
 
 
+def reconcile_source_pr(
+    api: GitHubApi,
+    repository: str,
+    source_pull_number: int,
+    expected_sha: str,
+) -> bool:
+    """Reopen a source PR when its head advances after its promotion merged."""
+    if not SHA_PATTERN.fullmatch(expected_sha):
+        raise ValueError("expected SHA must be a full hexadecimal commit ID")
+    source = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
+    if source.get("state") != "closed":
+        return False
+
+    promotion = latest_merged_promotion(api, repository, source_pull_number)
+    if promotion is None:
+        return False
+    internal_number, promoted_sha, source_repository_id, internal_url = promotion
+    source_sha, source_state = validate_source_pr_for_finalization(
+        source, repository, source_pull_number, source_repository_id
+    )
+    if source_sha != expected_sha.lower():
+        raise ValueError(
+            f"pull request #{source_pull_number} head changed: expected "
+            f"{expected_sha.lower()}, found {source_sha}"
+        )
+    if source_state != "closed" or source_sha == promoted_sha:
+        return False
+
+    api.patch(
+        f"/repos/{repository}/pulls/{source_pull_number}",
+        {"state": "open"},
+    )
+    reopened = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
+    reopened_sha, reopened_state = validate_source_pr_for_finalization(
+        reopened, repository, source_pull_number, source_repository_id
+    )
+    marker = (
+        "<!-- fork-promotion-reconciled: "
+        f"internal-pr={internal_number} source-sha={source_sha} -->"
+    )
+    post_comment_once(
+        api,
+        repository,
+        source_pull_number,
+        marker,
+        (
+            f"Internal pull request {internal_url} merged reviewed revision "
+            f"`{promoted_sha}`, but this source pull request advanced to "
+            f"`{reopened_sha}`. It was reopened so that revision can follow the "
+            "normal authorization and promotion process."
+        ),
+    )
+    append_summary(
+        [
+            "### Fork pull request reconciliation",
+            "",
+            f"- Source pull request: `#{source_pull_number}`",
+            f"- Merged source commit: `{promoted_sha}`",
+            f"- Current source commit: `{reopened_sha}`",
+            f"- Source state: `{reopened_state}`",
+        ]
+    )
+    return reopened_state == "open"
+
+
 def finalize_internal_pr(
     api: GitHubApi, repository: str, internal_pull_number: int
 ) -> bool:
@@ -570,11 +687,32 @@ def finalize_internal_pr(
     if internal.get("state") != "closed" or not internal.get("merged"):
         raise ValueError(
             f"internal pull request #{internal_pull_number} is not merged"
-        )
+    )
     source_pull_number, promoted_sha, branch, source_repository_id = identity
+    internal_url = str(internal.get("html_url", ""))
     source = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
     source_sha, source_state = validate_source_pr_for_finalization(
         source, repository, source_pull_number, source_repository_id
+    )
+    merged_marker = (
+        "<!-- fork-promotion-merged: "
+        f"internal-pr={internal_pull_number} source-sha={promoted_sha} -->"
+    )
+    # Publish the immutable merge fact before closing. A synchronize event that
+    # lands anywhere in the remaining finalization window can validate this
+    # marker against the merged internal PR and reconcile a newer source head.
+    post_comment_once(
+        api,
+        repository,
+        source_pull_number,
+        merged_marker,
+        (
+            f"Internal pull request {internal_url} merged reviewed revision "
+            f"`{promoted_sha}` from branch `{branch}`. Finalization closes this "
+            "source pull request only while it still points to that revision; "
+            "a newer revision follows the normal authorization and promotion "
+            "process."
+        ),
     )
 
     source_closed = False
@@ -602,9 +740,8 @@ def finalize_internal_pr(
             latest_source, repository, source_pull_number, source_repository_id
         )
         source_closed = False
-    internal_url = str(internal.get("html_url", ""))
-    marker = (
-        "<!-- fork-promotion-merged: "
+    result_marker = (
+        "<!-- fork-promotion-finalized: "
         f"internal-pr={internal_pull_number} source-sha={promoted_sha} -->"
     )
     if latest_sha == promoted_sha and latest_state == "closed":
@@ -620,7 +757,7 @@ def finalize_internal_pr(
         api,
         repository,
         source_pull_number,
-        marker,
+        result_marker,
         (
             f"Internal pull request {internal_url} merged reviewed revision "
             f"`{promoted_sha}` from branch `{branch}`. {result}"
@@ -667,6 +804,9 @@ def parse_args() -> argparse.Namespace:
     promote.add_argument("--actor", required=True)
     finalize = commands.add_parser("finalize")
     finalize.add_argument("--internal-pull-number", type=int, required=True)
+    reconcile = commands.add_parser("reconcile")
+    reconcile.add_argument("--pull-number", type=int, required=True)
+    reconcile.add_argument("--expected-sha", required=True)
     return parser.parse_args()
 
 
@@ -685,6 +825,9 @@ def main() -> int:
     api = GitHubApi(api_url, token)
     if args.command == "finalize":
         finalize_internal_pr(api, repository, args.internal_pull_number)
+        return 0
+    if args.command == "reconcile":
+        reconcile_source_pr(api, repository, args.pull_number, args.expected_sha)
         return 0
 
     pull = api.get(f"/repos/{repository}/pulls/{args.pull_number}")

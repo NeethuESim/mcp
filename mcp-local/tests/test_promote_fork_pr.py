@@ -385,6 +385,8 @@ def test_source_pr_is_reopened_when_revision_races_the_close() -> None:
 def test_merged_internal_pr_closes_its_matching_source(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    events: list[str] = []
+
     class FinalizationApi:
         def __init__(self) -> None:
             self.source_state = "open"
@@ -400,13 +402,25 @@ def test_merged_internal_pr_closes_its_matching_source(
 
         def patch(self, path: str, payload: dict) -> None:
             self.requests.append((path, payload))
+            events.append(f"patch:{payload['state']}")
             self.source_state = payload["state"]
 
     comments: list[str] = []
+
+    def record_comment(
+        _api: object,
+        _repository: str,
+        _number: int,
+        marker: str,
+        body: str,
+    ) -> None:
+        events.append(marker)
+        comments.append(body)
+
     monkeypatch.setattr(
         PROMOTION,
         "post_comment_once",
-        lambda _api, _repository, _number, _marker, body: comments.append(body),
+        record_comment,
     )
     api = FinalizationApi()
 
@@ -414,7 +428,9 @@ def test_merged_internal_pr_closes_its_matching_source(
     assert api.requests == [
         ("/repos/arm/mcp/pulls/185", {"state": "closed"})
     ]
-    assert "source pull request is now closed" in comments[0]
+    assert events[0].startswith("<!-- fork-promotion-merged:")
+    assert events.index("patch:closed") > 0
+    assert any("source pull request is now closed" in comment for comment in comments)
 
 
 def test_merged_internal_pr_finalizes_after_the_source_fork_is_deleted(
@@ -450,7 +466,7 @@ def test_merged_internal_pr_finalizes_after_the_source_fork_is_deleted(
     assert api.requests == [
         ("/repos/arm/mcp/pulls/185", {"state": "closed"})
     ]
-    assert "source pull request is now closed" in comments[0]
+    assert any("source pull request is now closed" in comment for comment in comments)
 
 
 def test_deleted_fork_finalization_requires_stored_repository_identity() -> None:
@@ -504,7 +520,10 @@ def test_merged_internal_pr_leaves_a_newer_source_revision_open(
     assert not PROMOTION.finalize_internal_pr(
         UpdatedSourceApi(), "arm/mcp", 186
     )
-    assert "requires separate authorization and promotion" in comments[0]
+    assert any(
+        "requires separate authorization and promotion" in comment
+        for comment in comments
+    )
 
 
 def test_finalization_comment_is_state_neutral_for_a_newer_closed_source(
@@ -532,9 +551,10 @@ def test_finalization_comment_is_state_neutral_for_a_newer_closed_source(
     assert not PROMOTION.finalize_internal_pr(
         ClosedUpdatedSourceApi(), "arm/mcp", 186
     )
-    assert f"now points to `{'b' * 40}`" in comments[0]
-    assert "requires separate authorization and promotion" in comments[0]
-    assert "remains open" not in comments[0]
+    result = next(comment for comment in comments if "now points to" in comment)
+    assert f"now points to `{'b' * 40}`" in result
+    assert "requires separate authorization and promotion" in result
+    assert "remains open" not in result
 
 
 def test_finalization_reopens_a_source_updated_just_after_closing(
@@ -567,6 +587,161 @@ def test_finalization_reopens_a_source_updated_just_after_closing(
     assert api.requests == [
         ("/repos/arm/mcp/pulls/185", {"state": "open"})
     ]
+
+
+def test_synchronize_reconciliation_reopens_a_late_source_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    updated_sha = "b" * 40
+
+    class ReconciliationApi:
+        def __init__(self) -> None:
+            self.source_state = "closed"
+            self.requests: list[tuple[str, dict]] = []
+
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                pull = internal_pr(state="closed", merged=True)
+                pull["merged_at"] = "2026-10-12T12:00:00Z"
+                return pull
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr(sha=updated_sha)
+            pull["state"] = self.source_state
+            return pull
+
+        def patch(self, path: str, payload: dict) -> None:
+            self.requests.append((path, payload))
+            self.source_state = payload["state"]
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda _api, path, _query: [
+            {
+                "body": (
+                    "<!-- fork-promotion-merged: "
+                    f"internal-pr=186 source-sha={SHA} -->"
+                )
+            }
+        ]
+        if path.endswith("/issues/185/comments")
+        else [],
+    )
+    comments: list[str] = []
+    monkeypatch.setattr(
+        PROMOTION,
+        "post_comment_once",
+        lambda _api, _repository, _number, _marker, body: comments.append(body),
+    )
+    api = ReconciliationApi()
+
+    assert PROMOTION.reconcile_source_pr(api, "arm/mcp", 185, updated_sha)
+    assert api.requests == [
+        ("/repos/arm/mcp/pulls/185", {"state": "open"})
+    ]
+    assert "normal authorization and promotion process" in comments[0]
+
+
+def test_synchronize_reconciliation_keeps_the_merged_revision_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReconciliationApi:
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(state="closed", merged=True)
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr()
+            pull["state"] = "closed"
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("the merged source revision must remain closed")
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda *_args: [
+            {
+                "body": (
+                    "<!-- fork-promotion-merged: "
+                    f"internal-pr=186 source-sha={SHA} -->"
+                )
+            }
+        ],
+    )
+
+    assert not PROMOTION.reconcile_source_pr(
+        ReconciliationApi(), "arm/mcp", 185, SHA
+    )
+
+
+def test_synchronize_reconciliation_rejects_a_stale_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current_sha = "c" * 40
+
+    class ReconciliationApi:
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(state="closed", merged=True)
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr(sha=current_sha)
+            pull["state"] = "closed"
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("a stale synchronize event must not reopen the source")
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda *_args: [
+            {
+                "body": (
+                    "<!-- fork-promotion-merged: "
+                    f"internal-pr=186 source-sha={SHA} -->"
+                )
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="head changed"):
+        PROMOTION.reconcile_source_pr(
+            ReconciliationApi(), "arm/mcp", 185, "b" * 40
+        )
+
+
+def test_synchronize_reconciliation_ignores_an_unmerged_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ReconciliationApi:
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(state="open", merged=False)
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr(sha="b" * 40)
+            pull["state"] = "closed"
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("an unverified merge marker must not reopen the source")
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda *_args: [
+            {
+                "body": (
+                    "<!-- fork-promotion-merged: "
+                    f"internal-pr=186 source-sha={SHA} -->"
+                )
+            }
+        ],
+    )
+
+    assert not PROMOTION.reconcile_source_pr(
+        ReconciliationApi(), "arm/mcp", 185, "b" * 40
+    )
 
 
 @pytest.mark.parametrize(

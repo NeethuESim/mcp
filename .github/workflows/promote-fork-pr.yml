@@ -68,15 +68,24 @@ jobs:
           permission-metadata: read
           permission-pull-requests: write
 
-      - name: Promote exact reviewed fork revision
+      - name: Reconcile and promote exact reviewed fork revision
         env:
           GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_NAME: ${{ github.event_name }}
           PROMOTION_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || inputs.reviewed_sha }}
           PROMOTED_BY: ${{ github.actor }}
         run: |
           set -euo pipefail
+          if [[ "${EVENT_NAME}" == "pull_request_target" \
+            && "${EVENT_ACTION}" == "synchronize" ]]; then
+            python3 .github/scripts/promote-fork-pr.py \
+              reconcile \
+              --pull-number "${PULL_REQUEST_NUMBER}" \
+              --expected-sha "${EXPECTED_SHA}"
+          fi
           python3 .github/scripts/promote-fork-pr.py \
             promote \
             --mode "${PROMOTION_MODE}" \

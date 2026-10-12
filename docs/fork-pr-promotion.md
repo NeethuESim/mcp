@@ -16,7 +16,7 @@
 ## Process flow
 
 ```mermaid
-%%{init: {"themeVariables": {"fontSize": "12px"}}}%%
+%%{init: {"flowchart": {"useMaxWidth": true}, "themeVariables": {"fontSize": "12px"}}}%%
 flowchart TD
     A["Open or update a fork PR"]
     A --> G["Source PR check fails<br/>Review the promoted PR"]
@@ -30,17 +30,14 @@ flowchart TD
     H --> I["Verify the branch remains pinned"]
     I --> J["Archive every Git blob<br/>Run Black Duck"]
     J --> K{"Changes requested?"}
-    K -- Yes --> L["Push a new SHA to the fork PR"]
-    L --> B
+    K -- Yes --> L["Push a new SHA<br/>Start a new authorization cycle"]
     K -- No --> M["Merge the internal PR"]
     M --> N{"Source still at the merged SHA?"}
     N -- Yes --> O["Close the source PR"]
-    N -- No --> P["Keep the source PR open"]
+    N -- No --> P["Keep the source PR open<br/>Start a new authorization cycle"]
     O --> Q{"Did a new SHA race finalization?"}
-    Q -- Yes --> R["Reopen the source PR<br/>Reconcile the synchronize event"]
+    Q -- Yes --> R["Reopen the source PR<br/>Start a new authorization cycle"]
     Q -- No --> S["Lifecycle complete"]
-    P --> B
-    R --> B
 ```
 
 Fork pull requests cannot access the Black Duck credentials stored in `arm/mcp`.

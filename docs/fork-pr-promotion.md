@@ -16,28 +16,30 @@
 ## Process flow
 
 ```mermaid
-%%{init: {"flowchart": {"useMaxWidth": true}, "themeVariables": {"fontSize": "12px"}}}%%
 flowchart TD
-    A["Open or update a fork PR"]
-    A --> G["Source PR check fails<br/>Review the promoted PR"]
-    G --> B{"Are the author and actor trusted?"}
-    B -- Yes --> C["Auto-authorize the exact SHA"]
-    B -- No --> D["Maintainer reviews the exact SHA"]
-    D --> E["Run manual promotion"]
-    C --> F["Validate PR, SHA, files,<br/>target, and workflow rules"]
-    E --> F
-    F --> H["Create or reopen immutable internal PR<br/>Close older open promotions"]
-    H --> I["Verify the branch remains pinned"]
-    I --> J["Archive every Git blob<br/>Run Black Duck"]
-    J --> K{"Changes requested?"}
-    K -- Yes --> L["Push a new SHA<br/>Start a new authorization cycle"]
-    K -- No --> M["Merge the internal PR"]
-    M --> N{"Source still at the merged SHA?"}
-    N -- Yes --> O["Close the source PR"]
-    N -- No --> P["Keep the source PR open<br/>Start a new authorization cycle"]
-    O --> Q{"Did a new SHA race finalization?"}
-    Q -- Yes --> R["Reopen the source PR<br/>Start a new authorization cycle"]
-    Q -- No --> S["Lifecycle complete"]
+    A[Open or update fork PR] --> B[Source PR check fails]
+    B --> C{Trusted author and actor?}
+    C -- Yes --> D[Authorize SHA automatically]
+    C -- No --> E[Maintainer reviews SHA]
+    E --> F[Run manual promotion]
+    D --> G[Validate reviewed revision]
+    F --> G
+    G --> H[Create immutable internal PR]
+    H --> I[Verify pinned branch]
+    I --> J[Archive tracked Git blobs]
+    J --> K[Run Black Duck]
+    K --> L{Changes requested?}
+    L -- Yes --> M[Contributor pushes new SHA]
+    L -- No --> N[Merge internal PR]
+    N --> O{Source at merged SHA?}
+    O -- No --> P[Keep source PR open]
+    O -- Yes --> Q[Close source PR]
+    Q --> R{New SHA raced finalization?}
+    R -- Yes --> S[Reopen source PR]
+    R -- No --> T[Lifecycle complete]
+    M --> U[Repeat authorization and promotion]
+    P --> U
+    S --> U
 ```
 
 Fork pull requests cannot access the Black Duck credentials stored in `arm/mcp`.

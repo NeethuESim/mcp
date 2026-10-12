@@ -245,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${REVIEWED_SHA}"
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import os
           import re
           import shutil

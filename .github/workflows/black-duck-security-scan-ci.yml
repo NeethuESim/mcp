@@ -302,9 +302,9 @@ jobs:
 
                   info = ZipInfo(path)
                   info.create_system = 3
-                  permissions = int(mode, 8) & 0o777
-                  file_type = stat.S_IFLNK if mode == "120000" else stat.S_IFREG
-                  info.external_attr = (file_type | permissions) << 16
+                  # Archive symlink targets as inert text rather than materialized links.
+                  permissions = 0o644 if mode == "120000" else int(mode, 8) & 0o777
+                  info.external_attr = (stat.S_IFREG | permissions) << 16
                   info.compress_type = ZIP_DEFLATED
 
                   process = subprocess.Popen(

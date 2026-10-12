@@ -4,9 +4,6 @@
 
 - Promotes an exact, reviewed fork commit into an immutable same-repository
   branch and pull request where credentialed Black Duck checks can run safely.
-- Automatically promotes revisions when both the contributor and triggering
-  user are trusted; all other revisions require one explicit maintainer
-  approval.
 - Keeps the original fork pull request as the canonical discussion thread and
   closes it only after its matching internal pull request merges.
 - Uses SHA pinning, App-authenticated lifecycle markers, and event-driven
@@ -18,87 +15,46 @@
 - A contributor opens or updates a fork pull request. Its Black Duck check
   fails intentionally and directs reviewers to use the promoted internal pull
   request.
-- The exact fork head SHA is authorized:
-  - If both the author and triggering user are trusted, authorization and
-    promotion are automatic.
-  - Otherwise, a maintainer reviews the SHA and runs the manual promotion.
-- The workflow validates the source pull request, reviewed SHA, changed-file
-  list, target branch, and workflow-file restrictions.
+- The exact fork head SHA follows one of the promotion paths below.
+- The workflow applies the promotion safeguards before creating an internal
+  pull request.
 - The workflow creates or reopens an immutable internal pull request and closes
   older open, unmerged promotions as superseded.
-- The Black Duck job verifies that the promoted branch remains pinned, archives
-  every tracked Git blob, and scans the inert archive.
+- The required Black Duck check runs on the promoted pull request.
 - If changes are requested, the contributor pushes a new SHA to the original
   fork pull request and the authorization and promotion process repeats.
-- After the final internal pull request merges:
-  - If the source still points to the merged SHA, the workflow closes the
-    original fork pull request.
-  - If the source already points to a newer SHA, it remains open for another
-    authorization and promotion cycle.
-  - If a newer SHA races the close operation, reconciliation reopens the source
-    pull request and starts another authorization and promotion cycle.
-
-Fork pull requests cannot access the Black Duck credentials stored in `arm/mcp`.
-The `Manage reviewed fork pull request` workflow copies an exact fork revision
-to a SHA-addressed branch in `arm/mcp` and opens an internal pull request where
-the normal credentialed checks can run.
+- After the internal pull request merges, finalization closes only the matching
+  source revision; a newer revision remains or is restored to open.
 
 ## Promotion paths
 
-- A pull request authored by a user with effective `write`, `maintain`, or
-  `admin` access to `arm/mcp` is promoted automatically to
-  `trusted-fork-<github-username>/pr-<number>-<sha>`.
-- All other forks require a maintainer to run the workflow manually with the
-  pull request number and the full reviewed head SHA. These revisions are
-  promoted to `external-contributions/pr-<number>-<sha>`.
+- **Automatic:** When both the author and triggering user have `write`,
+  `maintain`, or `admin` access, the exact SHA is promoted to
+  `trusted-fork-<user>/pr-<number>-<sha>`.
+- **Manual:** All other revisions require a maintainer to review and promote
+  the exact SHA to `external-contributions/pr-<number>-<sha>`. This includes a
+  trusted author's revision when the triggering user is untrusted.
 
-Manual promotion is also available when automatic promotion declines a
-trusted author's revision because the event was triggered by a user without
-write-level access. The maintainer's explicit review authorizes that exact SHA.
+## Promotion safeguards
 
-Each value above is used for both the SHA-addressed internal branch and the
-internal pull request title. The required Black Duck check verifies that the
-branch head still matches the SHA encoded in its name before checking out code
-or exposing credentials. Configure the stable
-`CI Black Duck security scan / Black Duck security scan` context as a required
-check for `main`. GitHub's **Update branch** operation and manual branch updates
-deliberately invalidate the check; do not merge or update a promoted branch
-that fails it.
+- The SHA-addressed branch name is also used as the internal pull request
+  title.
+- Draft, closed, non-fork, stale, and non-`main` pull requests are rejected.
+- Changes under `.github/workflows/`, including renames and deletions, must be
+  recreated and reviewed on a trusted internal branch.
+- Promotion fails closed at GitHub's 3,000-file listing limit and revalidates
+  the source head after file inspection.
+- Re-promoting the same SHA reopens a closed-unmerged internal pull request.
+  A newer promotion closes older open, unmerged promotions as superseded;
+  merged promotions remain closed.
 
-The workflow rejects draft pull requests, stale SHAs, closed pull requests,
-non-fork pull requests, pull requests that do not target `arm/mcp:main`, and
-changes to files under `.github/workflows/` (including renames and deletions).
-Workflow changes from forks must be recreated by a maintainer on a trusted
-internal branch and reviewed through that separate path. Promotion also fails
-closed when GitHub's changed-file listing reaches its 3,000-file limit; split
-such a contribution into smaller pull requests. The source head is revalidated
-after file inspection so a concurrent update cannot promote the earlier SHA
-using the newer revision's file list.
-For automatic promotion, the user whose event opened or updated the pull
-request must also have write-level access; an untrusted user cannot update a
-trusted author's fork branch and cause an automatic promotion.
-Updating a fork produces a new SHA-addressed promotion branch and pull request.
-If an internal pull request was closed without merging, promoting the same SHA
-reopens it. A merged internal pull request remains closed. After a replacement
-internal pull request is created and linked, older open and unmerged internal
-pull requests for the same source pull request are marked as superseded and
-closed.
+## Black Duck scan
 
-The Black Duck check intentionally fails on the original fork pull request.
-The source pull request remains open as the canonical discussion thread after
-promotion; review and merge only the linked internal pull request. If changes
-are requested, the contributor pushes them to the original fork branch. The new
-head SHA must be authorized and promoted into a replacement internal pull
-request before credentialed checks run for that revision.
-
-Same-repository pull requests use one hardened Black Duck scan path. Normal
-internal branches and `trusted-fork-` promotions run automatically; this
-accepts the credential-exposure risk for contributors with effective `write`,
-`maintain`, or `admin` access. For other contributors, a maintainer's manual
-promotion of the exact reviewed SHA is the single approval. After promotion
-creates the SHA-addressed `external-contributions/` branch, its Black Duck scan
-starts automatically. The scan's pin guard rejects either type of promoted
-branch if its head no longer matches the approved SHA.
+The required `CI Black Duck security scan / Black Duck security scan` check
+fails before checkout on the original fork pull request. On the promoted pull
+request, it verifies that the branch head still matches the SHA in its name
+before exposing credentials. Do not use **Update branch** or manually modify a
+promoted branch; either action invalidates this guard.
 
 The scan checks out the exact pull request head and creates a source ZIP from
 the raw contents of every tracked Git blob without running repository code.
@@ -111,23 +67,15 @@ Unsupported tree paths fail the job rather than producing a partial scan. The
 scan job has read-only repository permissions and receives no token capable of
 commenting on or changing the pull request.
 
-The same job exposes the stable `Black Duck security scan` required-check
-outcome: it fails before checkout on an original fork PR, while a
-same-repository PR continues through archive creation and the credentialed
-scan. The `Main Push and Scheduled full source scan` job is the separate full
-scan for `main` pushes and scheduled runs; it is not a pull-request merge gate.
+`Main Push and Scheduled full source scan` is the separate full scan for `main`
+pushes and scheduled runs; it is not a pull-request merge gate.
 
-When an internal pull request merges, the workflow closes the source pull
-request only if its current head still matches the merged, reviewed SHA. If the
-contributor has already pushed another revision, the source pull request remains
-open and that newer SHA requires separate authorization and promotion. The
-finalization path re-reads the source after closing and restores it to open if a
-concurrent update won the close race. If an update arrives after the final read,
-its trusted `pull_request_target` `synchronize` run verifies the recorded merged
-internal pull request, reopens the source, and then applies the normal
-authorization rules to the new SHA. Trusted authors and triggering users are
-promoted automatically; all other revisions remain open until a maintainer
-manually authorizes that exact SHA.
+## Finalization and reconciliation
+
+Finalization uses a close, re-read, and reopen protocol. A later
+`pull_request_target` `synchronize` event also reopens a source pull request if
+a new SHA arrives after the final read. The new revision then returns to the
+normal authorization process.
 
 Promotion also records the fork's immutable GitHub repository ID with the
 source pull request number and reviewed SHA in the internal pull request. If the
@@ -170,5 +118,4 @@ only `main` and treats the fork revision strictly as an opaque Git object. It
 never checks out or executes fork content. The organization Actions policy must
 allow `pull_request_target` for this workflow, including the `closed` event used
 to finalize a merged internal pull request, and must allow `workflow_dispatch`
-for explicit maintainer promotion. External contributors use that manual path
-after the maintainer reviews their exact head SHA.
+for explicit maintainer promotion.

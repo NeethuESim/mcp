@@ -44,6 +44,7 @@ def source_pr(*, sha: str = SHA, draft: bool = False) -> dict:
         "head": {
             "sha": sha,
             "repo": {
+                "id": 1234,
                 "fork": True,
                 "full_name": "trusted-user/mcp",
                 "owner": {"login": "trusted-user", "type": "User"},
@@ -60,14 +61,23 @@ def internal_pr(
     branch: str | None = None,
     state: str = "open",
     merged: bool = False,
+    source_repository_id: int | None = 1234,
 ) -> dict:
     branch = branch or f"external-contributions/pr-{source_number}-{sha}"
+    if source_repository_id is None:
+        marker = f"<!-- fork-promotion: source-pr={source_number} -->"
+    else:
+        marker = (
+            "<!-- fork-promotion: "
+            f"source-pr={source_number} source-sha={sha} "
+            f"source-repo-id={source_repository_id} -->"
+        )
     return {
         "number": number,
         "state": state,
         "merged": merged,
         "html_url": f"https://github.com/arm/mcp/pull/{number}",
-        "body": f"<!-- fork-promotion: source-pr={source_number} -->",
+        "body": marker,
         "base": {"ref": "main", "repo": {"full_name": "arm/mcp"}},
         "head": {
             "ref": branch,
@@ -113,6 +123,7 @@ def test_internal_pr_uses_the_promotion_name_for_its_title(
         branch,
         {
             "head_repository": "external-user/mcp",
+            "head_repository_id": "1234",
             "html_url": "https://github.com/arm/mcp/pull/185",
             "sha": SHA,
         },
@@ -124,6 +135,28 @@ def test_internal_pr_uses_the_promotion_name_for_its_title(
     assert api.payload is not None
     assert api.payload["head"] == branch
     assert api.payload["title"] == branch
+    assert f"source-sha={SHA} source-repo-id=1234" in api.payload["body"]
+
+
+def test_new_internal_pr_requires_a_stored_source_repository_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(PROMOTION, "find_internal_pr", lambda *_args: None)
+
+    with pytest.raises(ValueError, match="no valid stored repository ID"):
+        PROMOTION.create_internal_pr(
+            SimpleNamespace(),
+            "arm/mcp",
+            f"external-contributions/pr-185-{SHA}",
+            {
+                "head_repository": "external-user/mcp",
+                "html_url": "https://github.com/arm/mcp/pull/185",
+                "sha": SHA,
+            },
+            185,
+            "manual",
+            "maintainer",
+        )
 
 
 def test_closed_unmerged_internal_pr_is_reopened(
@@ -158,6 +191,7 @@ def test_closed_unmerged_internal_pr_is_reopened(
         f"external-contributions/pr-185-{SHA}",
         {
             "head_repository": "external-user/mcp",
+            "head_repository_id": "1234",
             "html_url": "https://github.com/arm/mcp/pull/185",
             "sha": SHA,
         },
@@ -200,6 +234,7 @@ def test_merged_internal_pr_is_not_reopened(
         f"external-contributions/pr-185-{SHA}",
         {
             "head_repository": "external-user/mcp",
+            "head_repository_id": "1234",
             "html_url": "https://github.com/arm/mcp/pull/185",
             "sha": SHA,
         },
@@ -382,6 +417,70 @@ def test_merged_internal_pr_closes_its_matching_source(
     assert "source pull request is now closed" in comments[0]
 
 
+def test_merged_internal_pr_finalizes_after_the_source_fork_is_deleted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DeletedForkApi:
+        def __init__(self) -> None:
+            self.source_state = "open"
+            self.requests: list[tuple[str, dict]] = []
+
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(state="closed", merged=True)
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr()
+            pull["state"] = self.source_state
+            pull["head"]["repo"] = None
+            return pull
+
+        def patch(self, path: str, payload: dict) -> None:
+            self.requests.append((path, payload))
+            self.source_state = payload["state"]
+
+    comments: list[str] = []
+    monkeypatch.setattr(
+        PROMOTION,
+        "post_comment_once",
+        lambda _api, _repository, _number, _marker, body: comments.append(body),
+    )
+    api = DeletedForkApi()
+
+    assert PROMOTION.finalize_internal_pr(api, "arm/mcp", 186)
+    assert api.requests == [
+        ("/repos/arm/mcp/pulls/185", {"state": "closed"})
+    ]
+    assert "source pull request is now closed" in comments[0]
+
+
+def test_deleted_fork_finalization_requires_stored_repository_identity() -> None:
+    class LegacyPromotionApi:
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(
+                    state="closed",
+                    merged=True,
+                    source_repository_id=None,
+                )
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr()
+            pull["head"]["repo"] = None
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("missing source identity must fail closed")
+
+    with pytest.raises(ValueError, match="no live fork or stored repository ID"):
+        PROMOTION.finalize_internal_pr(LegacyPromotionApi(), "arm/mcp", 186)
+
+
+def test_finalization_rejects_a_changed_source_repository_identity() -> None:
+    with pytest.raises(ValueError, match="repository identity changed"):
+        PROMOTION.validate_source_pr_for_finalization(
+            source_pr(), "arm/mcp", 185, 9999
+        )
+
+
 def test_merged_internal_pr_leaves_a_newer_source_revision_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -406,6 +505,36 @@ def test_merged_internal_pr_leaves_a_newer_source_revision_open(
         UpdatedSourceApi(), "arm/mcp", 186
     )
     assert "requires separate authorization and promotion" in comments[0]
+
+
+def test_finalization_comment_is_state_neutral_for_a_newer_closed_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ClosedUpdatedSourceApi:
+        def get(self, path: str) -> dict:
+            if path == "/repos/arm/mcp/pulls/186":
+                return internal_pr(state="closed", merged=True)
+            assert path == "/repos/arm/mcp/pulls/185"
+            pull = source_pr(sha="b" * 40)
+            pull["state"] = "closed"
+            return pull
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("finalization must not change a newer source revision")
+
+    comments: list[str] = []
+    monkeypatch.setattr(
+        PROMOTION,
+        "post_comment_once",
+        lambda _api, _repository, _number, _marker, body: comments.append(body),
+    )
+
+    assert not PROMOTION.finalize_internal_pr(
+        ClosedUpdatedSourceApi(), "arm/mcp", 186
+    )
+    assert f"now points to `{'b' * 40}`" in comments[0]
+    assert "requires separate authorization and promotion" in comments[0]
+    assert "remains open" not in comments[0]
 
 
 def test_finalization_reopens_a_source_updated_just_after_closing(
@@ -591,6 +720,7 @@ def test_source_validation_pins_the_exact_reviewed_sha() -> None:
     validated = PROMOTION.validate_source_pr(source_pr(), "arm/mcp", 185, SHA)
     assert validated["author"] == "trusted-user"
     assert validated["sha"] == SHA
+    assert validated["head_repository_id"] == "1234"
 
     with pytest.raises(ValueError, match="head changed"):
         PROMOTION.validate_source_pr(source_pr(), "arm/mcp", 185, "b" * 40)

@@ -52,12 +52,35 @@ are requested, the contributor pushes them to the original fork branch. The new
 head SHA must be authorized and promoted into a replacement internal pull
 request before credentialed checks run for that revision.
 
+Same-repository pull requests use one hardened Black Duck scan path. Normal
+internal branches and `trusted-fork-` promotions run automatically; this
+accepts the credential-exposure risk for contributors with effective `write`,
+`maintain`, or `admin` access. For other contributors, a maintainer's manual
+promotion of the exact reviewed SHA is the single approval. After promotion
+creates the SHA-addressed `external-contributions/` branch, its Black Duck scan
+starts automatically. The scan's pin guard rejects either type of promoted
+branch if its head no longer matches the approved SHA.
+
+The scan checks out the exact pull request head and creates a source archive
+without running repository code before invoking Black Duck. The scan job has
+read-only repository permissions and receives no token capable of commenting
+on or changing the pull request. A separate credential-free `Black Duck
+security scan` result job exposes the stable required-check outcome.
+
 When an internal pull request merges, the workflow closes the source pull
 request only if its current head still matches the merged, reviewed SHA. If the
 contributor has already pushed another revision, the source pull request remains
 open and that newer SHA requires separate authorization and promotion. The
 finalization path re-reads the source after closing and restores it to open if a
 concurrent update won the close race.
+
+Promotion also records the fork's immutable GitHub repository ID with the
+source pull request number and reviewed SHA in the internal pull request. If the
+contributor later deletes the fork and GitHub returns `head.repo: null`,
+finalization uses that stored identity and the still-reported head SHA to close
+and comment on the source pull request safely. Older promotions without the
+stored repository ID continue to finalize while the fork exists, but fail
+closed if its identity is no longer available.
 
 ## GitHub App configuration
 

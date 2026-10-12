@@ -40,6 +40,11 @@ PROMOTION_SUFFIX_PATTERN = re.compile(
     r"pr-(?P<pull_number>[1-9][0-9]*)-"
     r"(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
 )
+PROMOTION_MARKER_PATTERN = re.compile(
+    r"<!-- fork-promotion: source-pr=(?P<pull_number>[1-9][0-9]*)"
+    r"(?: source-sha=(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
+    r" source-repo-id=(?P<repository_id>[1-9][0-9]*))? -->"
+)
 
 
 class ApiError(RuntimeError):
@@ -162,6 +167,11 @@ def validate_source_pr(
         raise ValueError(f"pull request #{pull_number} is not from a fork")
     if not head_repo.get("fork"):
         raise ValueError(f"pull request #{pull_number} head repository is not a fork")
+    head_repository_id = head_repo.get("id")
+    if not isinstance(head_repository_id, int) or head_repository_id < 1:
+        raise ValueError(
+            f"pull request #{pull_number} head repository has no valid ID"
+        )
 
     actual_sha = str(head.get("sha", "")).lower()
     if not SHA_PATTERN.fullmatch(expected_sha) or actual_sha != expected_sha.lower():
@@ -174,6 +184,7 @@ def validate_source_pr(
     return {
         "author": author,
         "head_repository": str(head_repo.get("full_name", "")),
+        "head_repository_id": str(head_repository_id),
         "html_url": str(pull.get("html_url", "")),
         "sha": actual_sha,
     }
@@ -305,9 +316,14 @@ def create_internal_pr(
             return details
         return existing
 
+    source_repository_id = source.get("head_repository_id", "")
+    if not re.fullmatch(r"[1-9][0-9]*", source_repository_id):
+        raise ValueError("source fork has no valid stored repository ID")
     body = "\n".join(
         [
-            f"<!-- fork-promotion: source-pr={pull_number} -->",
+            "<!-- fork-promotion: "
+            f"source-pr={pull_number} source-sha={source['sha']} "
+            f"source-repo-id={source_repository_id} -->",
             "Promotes the exact revision from a fork pull request into an "
             "internal branch.",
             "",
@@ -335,8 +351,8 @@ def create_internal_pr(
 
 def internal_pr_identity(
     pull: dict[str, Any], repository: str
-) -> tuple[int, str, str] | None:
-    """Validate and return source PR, SHA, and branch for an internal PR."""
+) -> tuple[int, str, str, int | None] | None:
+    """Return source PR, SHA, branch, and stored source repository ID."""
     base = pull.get("base") or {}
     base_repo = base.get("repo") or {}
     head = pull.get("head") or {}
@@ -351,12 +367,21 @@ def internal_pr_identity(
     ):
         return None
     source_pull_number, promoted_sha = parsed
-    marker = f"<!-- fork-promotion: source-pr={source_pull_number} -->"
-    if marker not in str(pull.get("body", "")):
+    marker = PROMOTION_MARKER_PATTERN.search(str(pull.get("body", "")))
+    if marker is None or int(marker.group("pull_number")) != source_pull_number:
+        return None
+    marker_sha = marker.group("sha")
+    if marker_sha is not None and marker_sha.lower() != promoted_sha:
         return None
     if str(head.get("sha", "")).lower() != promoted_sha:
         return None
-    return source_pull_number, promoted_sha, branch
+    repository_id = marker.group("repository_id")
+    return (
+        source_pull_number,
+        promoted_sha,
+        branch,
+        int(repository_id) if repository_id is not None else None,
+    )
 
 
 def post_comment_once(
@@ -422,7 +447,12 @@ def supersede_internal_prs(
         identity = internal_pr_identity(pull, repository)
         if identity is None:
             continue
-        candidate_source, _candidate_sha, candidate_branch = identity
+        (
+            candidate_source,
+            _candidate_sha,
+            candidate_branch,
+            _source_repo_id,
+        ) = identity
         if candidate_source != source_pull_number or candidate_branch == current_branch:
             continue
         internal_number = pull.get("number")
@@ -486,7 +516,10 @@ def close_source_pr(
 
 
 def validate_source_pr_for_finalization(
-    pull: dict[str, Any], repository: str, pull_number: int
+    pull: dict[str, Any],
+    repository: str,
+    pull_number: int,
+    expected_head_repository_id: int | None,
 ) -> tuple[str, str]:
     """Validate source PR identity without requiring it to remain open."""
     if pull.get("number") != pull_number:
@@ -500,12 +533,23 @@ def validate_source_pr_for_finalization(
             f"pull request #{pull_number} no longer targets "
             f"{repository}:{BASE_BRANCH}"
         )
-    if (
-        not head_repo
-        or head_repo.get("full_name") == repository
-        or not head_repo.get("fork")
-    ):
-        raise ValueError(f"pull request #{pull_number} is not from a fork")
+    if head_repo:
+        if (
+            head_repo.get("full_name") == repository
+            or not head_repo.get("fork")
+        ):
+            raise ValueError(f"pull request #{pull_number} is not from a fork")
+        if (
+            expected_head_repository_id is not None
+            and head_repo.get("id") != expected_head_repository_id
+        ):
+            raise ValueError(
+                f"pull request #{pull_number} head repository identity changed"
+            )
+    elif expected_head_repository_id is None:
+        raise ValueError(
+            f"pull request #{pull_number} has no live fork or stored repository ID"
+        )
     source_sha = str(head.get("sha", "")).lower()
     if not SHA_PATTERN.fullmatch(source_sha):
         raise ValueError(f"pull request #{pull_number} has no valid head SHA")
@@ -527,10 +571,10 @@ def finalize_internal_pr(
         raise ValueError(
             f"internal pull request #{internal_pull_number} is not merged"
         )
-    source_pull_number, promoted_sha, branch = identity
+    source_pull_number, promoted_sha, branch, source_repository_id = identity
     source = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
     source_sha, source_state = validate_source_pr_for_finalization(
-        source, repository, source_pull_number
+        source, repository, source_pull_number, source_repository_id
     )
 
     source_closed = False
@@ -543,7 +587,7 @@ def finalize_internal_pr(
     # observed state and a concurrent source update remains visible.
     latest_source = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
     latest_sha, latest_state = validate_source_pr_for_finalization(
-        latest_source, repository, source_pull_number
+        latest_source, repository, source_pull_number, source_repository_id
     )
     if source_closed and latest_state == "closed" and latest_sha != promoted_sha:
         # A contributor update can land just after close_source_pr's final
@@ -555,7 +599,7 @@ def finalize_internal_pr(
         )
         latest_source = api.get(f"/repos/{repository}/pulls/{source_pull_number}")
         latest_sha, latest_state = validate_source_pr_for_finalization(
-            latest_source, repository, source_pull_number
+            latest_source, repository, source_pull_number, source_repository_id
         )
         source_closed = False
     internal_url = str(internal.get("html_url", ""))
@@ -567,9 +611,8 @@ def finalize_internal_pr(
         result = "The source pull request is now closed."
     elif latest_sha != promoted_sha:
         result = (
-            f"The source pull request now points to `{latest_sha}`, so it remains "
-            "open. That newer revision requires separate authorization and "
-            "promotion."
+            f"The source pull request now points to `{latest_sha}`. That newer "
+            "revision requires separate authorization and promotion."
         )
     else:
         result = "The source pull request was not closed because its state changed."

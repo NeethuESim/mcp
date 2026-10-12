@@ -137,3 +137,20 @@ def test_selective_filter_finds_chunks_beyond_global_candidate_limits(branch):
     )
     assert [hit["metadata"]["chunk_uuid"] for hit in hits] == ["405"]
     assert bool(hits[0].get("pinned_lexical")) == (branch != "dense")
+
+
+def test_refill_after_navigation_filtering_stays_within_metadata_filters():
+    metadata = [
+        chunk(i, platform="linux", original_text="Log an issue" if i < 100 else "Useful needle instructions")
+        for i in range(103)
+    ]
+    metadata.extend(chunk(i, platform="windows", original_text="Useful needle instructions") for i in range(103, 105))
+    state = SearchResources(
+        metadata, QueryModel(), index_for([[0.1, 0]] * 100 + [[0.2, 0]] * 3 + [[0, 0]] * 2),
+        None, include_disclaimers=False,
+    )
+
+    hits = search("needle", state, k=3, filters={"platform": "linux"})
+
+    assert len(hits) == 3
+    assert all(hit["platform"] == "linux" and hit["snippet"] == "Useful needle instructions" for hit in hits)

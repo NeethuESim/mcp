@@ -514,7 +514,7 @@ def test_source_scan_exports_cyclonedx_sbom_for_full_scans_only() -> None:
     )[1].split("  pull_request_scan:", maxsplit=1)[0]
     pr_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
         "  pull_request_scan:", maxsplit=1
-    )[1].split("  pull_request_result:", maxsplit=1)[0]
+    )[1]
 
     assert "Export Black Duck CycloneDX SBOM" in full_scan_section
     assert "id: source-sbom-export" in full_scan_section
@@ -550,9 +550,22 @@ def test_source_scan_exports_cyclonedx_sbom_for_full_scans_only() -> None:
 
 
 def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
-    assert "\n  pull_request_result:\n    name: Black Duck security scan\n" in (
+    assert "\n  pull_request_scan:\n    name: Black Duck security scan\n" in (
         BLACKDUCK_SOURCE_SCAN_WORKFLOW
     )
+    assert "pull_request_result:" not in BLACKDUCK_SOURCE_SCAN_WORKFLOW
+    blackduck_workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    assert "pull_request_result" not in blackduck_workflow["jobs"]
+    pr_job = blackduck_workflow["jobs"]["pull_request_scan"]
+    assert pr_job["name"] == "Black Duck security scan"
+    assert pr_job["if"] == "${{ github.event_name == 'pull_request' }}"
+    assert pr_job["steps"][0]["name"] == (
+        "Enforce the Black Duck pull request policy"
+    )
+    blackduck_step = next(
+        step for step in pr_job["steps"] if step["name"] == "Black Duck SCA PR Scan"
+    )
+    assert "head.repo.full_name == github.repository" in blackduck_step["if"]
 
     triggers = FORK_PROMOTION_WORKFLOW.split("permissions:", maxsplit=1)[0]
     assert "pull_request_target:" in triggers
@@ -610,7 +623,12 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
 
     pr_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
         "  pull_request_scan:", maxsplit=1
-    )[1].split("  pull_request_result:", maxsplit=1)[0]
+    )[1]
+    assert "if: ${{ github.event_name == 'pull_request' }}" in pr_scan_section
+    assert "HEAD_REPOSITORY:" in pr_scan_section
+    assert pr_scan_section.index("Enforce the Black Duck pull request policy") < (
+        pr_scan_section.index("Checkout the reviewed pull request head")
+    )
     assert (
         "github.event.pull_request.head.repo.full_name == github.repository"
         in pr_scan_section
@@ -629,12 +647,6 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "blackducksca_prcomment_enabled: false" in pr_scan_section
     assert "github_token:" not in pr_scan_section
     assert "pull-requests: write" not in pr_scan_section
-
-    result_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
-        "  pull_request_result:", maxsplit=1
-    )[1]
-    assert "needs: pull_request_scan" in result_section
-    assert "SCAN_RESULT: ${{ needs.pull_request_scan.result }}" in result_section
 
 
 def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None:

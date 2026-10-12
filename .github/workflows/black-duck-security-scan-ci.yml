@@ -182,12 +182,8 @@ jobs:
           exit 1
 
   pull_request_scan:
-    name: Scan reviewed pull request archive
-    if: >-
-      ${{
-        github.event_name == 'pull_request'
-        && github.event.pull_request.head.repo.full_name == github.repository
-      }}
+    name: Black Duck security scan
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -195,7 +191,20 @@ jobs:
     env:
       DETECT_PROJECT_NAME: "Arm:MCP"
       DETECT_PROJECT_VERSION_NAME: "mcp-source-1.0"
+      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
     steps:
+      - name: Enforce the Black Duck pull request policy
+        run: |
+          set -euo pipefail
+          if [[ "${HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
+            message="Fork pull requests cannot run credentialed Black Duck checks. "
+            message+="Use the Manage reviewed fork pull request workflow, then "
+            message+="review and merge the internal pull request it creates. "
+            message+="Do not merge this source pull request."
+            echo "::error title=Merge the promoted internal pull request::${message}"
+            exit 1
+          fi
+
       - name: Verify promoted branch remains pinned to its reviewed commit
         if: >-
           ${{
@@ -318,6 +327,10 @@ jobs:
 
       - name: Black Duck SCA PR Scan
         id: black-duck-pr-scan
+        if: >-
+          ${{
+            github.event.pull_request.head.repo.full_name == github.repository
+          }}
         uses: blackduck-inc/black-duck-security-scan@152247222aa9cd38124acd5c0cf60f4db71adc3f # v2.11.0
         with:
           project_source_archive: ${{ runner.temp }}/blackduck-pr-source.zip
@@ -333,30 +346,3 @@ jobs:
 
           ### Mark build status as failure if policy violating issues are found
           mark_build_status: 'failure'
-
-  pull_request_result:
-    name: Black Duck security scan
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    needs: pull_request_scan
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    env:
-      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-      SCAN_RESULT: ${{ needs.pull_request_scan.result }}
-    steps:
-      - name: Enforce the Black Duck pull request policy
-        run: |
-          set -euo pipefail
-          if [[ "${HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
-            message="Fork pull requests cannot run credentialed Black Duck checks. "
-            message+="Use the Manage reviewed fork pull request workflow, then "
-            message+="review and merge the internal pull request it creates. "
-            message+="Do not merge this source pull request."
-            echo "::error title=Merge the promoted internal pull request::${message}"
-            exit 1
-          fi
-          if [[ "${SCAN_RESULT}" != "success" ]]; then
-            echo "::error title=Black Duck scan failed::The reviewed pull request scan concluded ${SCAN_RESULT}."
-            exit 1
-          fi

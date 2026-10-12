@@ -67,9 +67,10 @@ The exporter does not use `git archive`, checkout filters, or contributor-
 controlled `.gitattributes`, so `export-ignore` and `export-subst` cannot omit
 or rewrite reviewed files. Unsupported tree paths fail the job rather than
 producing a partial scan. The scan job has read-only repository permissions and
-receives no token capable of commenting on or changing the pull request. A
-separate credential-free `Black Duck security scan` result job exposes the
-stable required-check outcome.
+receives no token capable of commenting on or changing the pull request. The
+same job exposes the stable `Black Duck security scan` required-check outcome:
+it fails before checkout on an original fork PR, while a same-repository PR
+continues through archive creation and the credentialed scan.
 
 When an internal pull request merges, the workflow closes the source pull
 request only if its current head still matches the merged, reviewed SHA. If the

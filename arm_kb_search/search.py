@@ -48,7 +48,7 @@ IDENTIFIER_PROSE_TOKENS = {
     "path", "run", "same", "set", "that", "the", "them", "to", "up", "use",
     "using", "versus", "want", "web", "when", "where", "who", "why",
 }
-# Keep direct-intent stopwords separate from alias and entity exclusions.
+# Keep direct-intent stopwords separate from entity exclusions.
 DIRECT_INTENT_STOPWORDS = {
     "a", "an", "and", "are", "as", "be", "both", "by", "can", "do", "does", "for", "from",
     "how", "i", "in", "into", "is", "it", "of", "on", "or", "same", "should", "that", "the",
@@ -118,7 +118,7 @@ def tokenize_for_search(text: str) -> List[str]:
     return [token.lower() for token in SEARCH_TOKEN_PATTERN.findall(text or "")]
 
 
-def _query_field_tokens(text: str, tokens: set[str], query_tokens: set[str]) -> set[str]:
+def _query_field_tokens(tokens: set[str], query_tokens: set[str]) -> set[str]:
     """Retain explicit architecture equivalence without compound-name matching."""
     tokens = tokens.copy()
     architecture_aliases = {"arm64", "aarch64"}
@@ -362,7 +362,7 @@ def _score_lexical_exactness(query: _QueryAnalysis, metadata: Dict[str, Any]) ->
         else:
             field_text = _metadata_text(metadata, fields)
             field_tokens = _query_field_tokens(
-                field_text, set(tokenize_for_search(field_text)), query_tokens
+                set(tokenize_for_search(field_text)), query_tokens
             )
         if not field_tokens:
             continue
@@ -634,7 +634,7 @@ def _rerank_candidates(
             continue
         full_text = metadata.get("search_text", "")
         full_text_tokens = _query_field_tokens(
-            full_text, set(tokenize_for_search(full_text)), query_tokens
+            set(tokenize_for_search(full_text)), query_tokens
         )
         title_text = _metadata_text(metadata, ("title",))
         heading_text = _metadata_text(metadata, ("heading", "heading_path"))
@@ -642,10 +642,10 @@ def _rerank_candidates(
         source_url = metadata.get("url", "") or ""
 
         title_tokens = _query_field_tokens(
-            title_text, set(tokenize_for_search(title_text)), query_tokens
+            set(tokenize_for_search(title_text)), query_tokens
         )
         heading_tokens = _query_field_tokens(
-            heading_text, set(tokenize_for_search(heading_text)), query_tokens
+            set(tokenize_for_search(heading_text)), query_tokens
         )
         url_tokens = set(tokenize_url_content_for_search(source_url))
         resolved_url_tokens = set(

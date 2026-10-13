@@ -55,10 +55,11 @@ operating-system and architecture terms. Installation queries consider at least
 200 dense candidates to reduce candidate-cutoff misses; metadata filters still
 restrict both retrieval channels before scoring.
 
-Installation and learning-path preferences require matching intent and subject
-evidence. Contribution footers and structurally identified chapter menus are
-removed, preserving substantive introductions and next steps. One bounded
-candidate refill is available if filtering leaves too few results.
+The extra installation-guide bonus requires matching product evidence.
+Learning-path overview bonuses depend on query intent and title/URL overlap.
+Contribution footers and structurally identified chapter menus are removed,
+preserving substantive introductions and next steps. One bounded candidate refill
+is available if filtering leaves too few results.
 
 Results retain distinct heading sections, intrinsic identifiers, and meaningful
 URL parameters. Tracking aliases collapse. Markdown dashboard records use their

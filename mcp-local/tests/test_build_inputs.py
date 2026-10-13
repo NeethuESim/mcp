@@ -20,7 +20,6 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from zipfile import ZipFile
 
 import pytest
 import yaml
@@ -643,17 +642,23 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert '"git", "ls-tree", "-rz", "--full-tree"' in pr_scan_section
     assert '["git", "cat-file", "blob", object_id]' in pr_scan_section
     assert "every file and symlink stored as a Git blob" in pr_scan_section
-    assert "ZIP_DEFLATED" in pr_scan_section
+    assert "Materialize executable files and symlink targets as inert regular files" in (
+        pr_scan_section
+    )
     assert "Unsupported Git blob mode" in pr_scan_section
     assert "Unsafe Git tree path" in pr_scan_section
-    assert "Reviewed tree produced an empty source archive" in pr_scan_section
-    assert "project_source_archive:" in pr_scan_section
+    assert "Reviewed tree produced an empty source directory" in pr_scan_section
+    assert (
+        "project_directory: ${{ runner.temp }}/blackduck-pr-source"
+        in pr_scan_section
+    )
+    assert "project_source_archive:" not in pr_scan_section
     assert "blackducksca_prcomment_enabled: false" in pr_scan_section
     assert "github_token:" not in pr_scan_section
     assert "pull-requests: write" not in pr_scan_section
 
 
-def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None:
+def test_blackduck_pr_source_directory_is_inert_and_complete(tmp_path: Path) -> None:
     repository = tmp_path / "repository"
     runner_temp = tmp_path / "runner-temp"
     repository.mkdir()
@@ -663,6 +668,7 @@ def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None
     )
     (repository / "dependency.lock").write_text("must be scanned\n")
     (repository / "substituted.txt").write_text("$Format:%H$\n")
+    (repository / "dependency-link").symlink_to("dependency.lock")
 
     subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
     subprocess.run(["git", "add", "."], cwd=repository, check=True)
@@ -688,17 +694,17 @@ def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None
         text=True,
     ).stdout.strip()
     workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
-    archive_script = next(
+    materialize_script = next(
         step["run"]
         for step in workflow["jobs"]["pull_request_scan"]["steps"]
         if step["name"]
         == (
-            "Create inert source archive without executing repository code"
+            "Materialize inert source directory without executing repository code"
         )
     )
 
     subprocess.run(
-        ["bash", "-c", archive_script],
+        ["bash", "-c", materialize_script],
         cwd=repository,
         check=True,
         env={
@@ -708,14 +714,26 @@ def test_blackduck_pr_archive_ignores_archive_attributes(tmp_path: Path) -> None
         },
     )
 
-    with ZipFile(runner_temp / "blackduck-pr-source.zip") as archive:
-        assert set(archive.namelist()) == {
-            ".gitattributes",
-            "dependency.lock",
-            "substituted.txt",
-        }
-        assert archive.read("dependency.lock") == b"must be scanned\n"
-        assert archive.read("substituted.txt") == b"$Format:%H$\n"
+    source_directory = runner_temp / "blackduck-pr-source"
+    assert {
+        path.relative_to(source_directory).as_posix()
+        for path in source_directory.rglob("*")
+        if path.is_file()
+    } == {
+        ".gitattributes",
+        "dependency-link",
+        "dependency.lock",
+        "substituted.txt",
+    }
+    assert (source_directory / "dependency.lock").read_bytes() == (
+        b"must be scanned\n"
+    )
+    assert (source_directory / "substituted.txt").read_bytes() == (
+        b"$Format:%H$\n"
+    )
+    assert not (source_directory / "dependency-link").is_symlink()
+    assert (source_directory / "dependency-link").read_text() == "dependency.lock"
+    assert not ((source_directory / "dependency.lock").stat().st_mode & 0o111)
 
 
 def test_release_manifest_uses_the_validated_architecture_digests() -> None:

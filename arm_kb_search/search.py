@@ -41,12 +41,11 @@ SEARCH_STOPWORDS = {
     "benchmarking", "benchmarked", "benchmarks", "brief", "cloud", "config", "configure", "guide",
     "options", "reference", "setup", "tutorial",
 }
+# Additional prose exclusions beyond SEARCH_STOPWORDS for product identity.
 IDENTIFIER_PROSE_TOKENS = {
-    "a", "about", "an", "and", "app", "application", "are", "arm", "as", "based", "be", "best",
-    "both", "by", "can", "do", "for", "from", "get", "give", "how", "i", "in", "into",
-    "is", "it", "learn", "instance", "learning", "lp", "me", "my", "new", "of", "on", "or",
-    "path", "run", "same", "set", "that", "the", "them", "to", "up", "use",
-    "using", "versus", "want", "web", "when", "where", "who", "why",
+    "about", "app", "application", "as", "based", "best", "both", "by", "from", "get", "give",
+    "instance", "into", "learn", "learning", "lp", "me", "my", "new", "path", "run", "same", "set",
+    "that", "them", "up", "use", "using", "versus", "want", "web", "when", "where", "who", "why",
 }
 # Keep direct-intent stopwords separate from entity exclusions.
 DIRECT_INTENT_STOPWORDS = {
@@ -795,7 +794,7 @@ def hybrid_search(
     lexical_query = " ".join(dict.fromkeys(tokenize_for_search(query)))
     if not lexical_query:
         return []
-    query_analysis = _analyze_query(lexical_query)
+    query_analysis = _analyze_query(query)
 
     candidate_depth = candidate_depth or max(k * 20, 100)
     lexical_limit = max(k * 3, PINNED_LEXICAL_CANDIDATES)

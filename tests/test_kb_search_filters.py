@@ -432,25 +432,18 @@ def test_named_product_outweighs_generic_run_on_arm_title():
     assert ranked[0]['metadata']['chunk_uuid'] == 'product'
 
 
-def test_installation_retrieves_relevant_passage_beyond_initial_dense_pool():
-    import numpy as np
-
-    from arm_kb_search.resources import SearchResources
-    from arm_kb_search.resources import search as retrieve
-
-    class Model:
-        def encode(self, _texts):
-            return np.zeros((1, 2))
-
-    class Index:
-        def search(self, _vector, k):
-            count = min(k, len(metadata))
-            return np.arange(count), np.full(count, 0.2)
-
+@pytest.mark.parametrize("query", [
+    "Set up graphcli on an Arm instance",
+    "How do I set environment variables and set up graphcli on an Arm instance?",
+])
+def test_installation_retrieves_relevant_passage_beyond_initial_dense_pool(query):
     metadata = [passage(str(i), 'Other tool', 'Unrelated instructions.')['metadata'] for i in range(140)]
     metadata[120] = passage('correct', 'GraphCLI', 'Install GraphCLI on Linux.', doc_type='Install Guides')['metadata']
-    assets = SearchResources(metadata, Model(), Index(), None, include_disclaimers=False)
-    result = retrieve('Set up graphcli on an Arm instance', assets, k=5)
+    assets = SearchResources(
+        metadata, QueryModel(), index_for([[i / 1000, 0] for i in range(len(metadata))]),
+        None, include_disclaimers=False,
+    )
+    result = search(query, assets, k=5)
     assert result[0]['url'] == 'https://example.com/correct/'
 
 

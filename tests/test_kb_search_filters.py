@@ -225,11 +225,10 @@ def test_lexical_exactness_ignores_url_hostname():
         "resolved_url": "https://other.example.com/install-guides/linux",
     }
 
-    assert search_module._lexical_exactness_score(
-        "docs.example.com linux", matching_host
-    ) == search_module._lexical_exactness_score(
-        "docs.example.com linux", different_host
-    )
+    query = search_module._analyze_query("docs.example.com linux")
+    assert search_module._score_lexical_exactness(
+        query, matching_host
+    ) == search_module._score_lexical_exactness(query, different_host)
 
 
 @pytest.mark.parametrize("public_url", ["present", "missing", None, ""])
@@ -273,11 +272,12 @@ def test_empty_url_fields_do_not_match_none(field, value):
         metadata.pop(field)
     else:
         metadata[field] = value
-    assert search_module._lexical_exactness_score("none", metadata) == 0.0
+    query = search_module._analyze_query("none")
+    assert search_module._score_lexical_exactness(query, metadata) == 0.0
     ranked = search_module.rerank_candidates("none", [{"metadata": metadata}])
     assert ranked[0]["rerank_score"] == 0.0
     metadata[field] = "https://example.com/none"
-    assert search_module._lexical_exactness_score("none", metadata) > 0.0
+    assert search_module._score_lexical_exactness(query, metadata) > 0.0
 
 
 @pytest.mark.parametrize("architecture", ["arm64", "aarch64"])
@@ -285,11 +285,12 @@ def test_empty_url_fields_do_not_match_none(field, value):
 @pytest.mark.parametrize("stage", ["lexical", "rerank"])
 def test_phrase_scoring_treats_architecture_aliases_equally(architecture, suffix, stage):
     query = f"download {architecture}{suffix}"
+    analysis = search_module._analyze_query(query)
 
     def score(title):
         metadata = {"title": title, "url": "https://example.com/utility"}
         if stage == "lexical":
-            return search_module._lexical_exactness_score(query, metadata)
+            return search_module._score_lexical_exactness(analysis, metadata)
         # Isolate reranking's phrase bonus from its lexical contribution.
         candidate = {"metadata": metadata, "lexical_exactness_score": 0.0}
         return search_module.rerank_candidates(query, [candidate])[0]["rerank_score"]
@@ -439,7 +440,8 @@ def test_url_architecture_alias_scores_like_exact_match(query, alias, field, tem
         }
 
     exact, equivalent, arm32 = (metadata(architecture) for architecture in (query, alias, "arm32"))
-    lexical_scores = [search_module._lexical_exactness_score(query, item) for item in (exact, equivalent, arm32)]
+    analysis = search_module._analyze_query(query)
+    lexical_scores = [search_module._score_lexical_exactness(analysis, item) for item in (exact, equivalent, arm32)]
     assert lexical_scores[0] == pytest.approx(lexical_scores[1])
     assert lexical_scores[1] > lexical_scores[2]
 

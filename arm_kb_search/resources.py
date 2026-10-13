@@ -153,8 +153,7 @@ def search(
     search_results = ranked_candidates(pool_size)
     expanded_pool_size = min(LEXICAL_PREPASS_DEPTH, pool_size * 4)
     can_expand = (
-        len(search_results) >= pool_size
-        or (len(eligible_ids) if eligible_ids is not None else len(resources.metadata))
+        (len(eligible_ids) if eligible_ids is not None else len(resources.metadata))
         > max(candidate_depth, pool_size)
     )
     if len(search_results) < resolved_k and can_expand and expanded_pool_size > pool_size:

@@ -153,10 +153,6 @@ def salient_tokens(text: str) -> List[str]:
     return [token for token in tokenize_for_search(text) if token not in SEARCH_STOPWORDS]
 
 
-def direct_intent_tokens(text: str) -> List[str]:
-    return [token for token in tokenize_for_search(text) if token not in DIRECT_INTENT_STOPWORDS]
-
-
 def _installation_subject_tokens(query: str) -> set[str]:
     """Identify a short tool name before an installation's platform context."""
     match = re.search(
@@ -166,7 +162,7 @@ def _installation_subject_tokens(query: str) -> set[str]:
     if not match:
         return set()
     tokens = set(salient_tokens(match.group(1))) - GENERIC_ENTITY_TOKENS
-    tokens -= {"tool", "tools", "package", "packages", "software", "instructions", "steps"}
+    tokens -= {"tool", "tools", "package", "packages", "software", "instructions"}
     return tokens if 0 < len(tokens) <= 3 else set()
 
 
@@ -336,10 +332,6 @@ def _support_evidence_score(query_tokens: set[str], text_tokens: set[str], text:
     if _has_negative_support_evidence(text):
         score += 0.25
     return score
-
-
-def _lexical_exactness_score(query: str, metadata: Dict[str, Any]) -> float:
-    return _score_lexical_exactness(_analyze_query(query), metadata)
 
 
 def _score_lexical_exactness(query: _QueryAnalysis, metadata: Dict[str, Any]) -> float:

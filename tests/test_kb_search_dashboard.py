@@ -80,18 +80,41 @@ def test_duplicate_files_in_same_edition_keep_highest_ranked_hit(
     assert deduplicate_urls([first, second], max_chunks_per_url=2) == [first, second]
 
 
-def test_other_documents_and_legacy_dashboard_keep_url_deduplication():
+@pytest.mark.parametrize("sources", [
+    ("first", "second"),
+    ("https://raw.githubusercontent.com/repo/main/a.md", "https://raw.githubusercontent.com/repo/main/b.md"),
+    ("https://example.com/source?download=1", "https://example.com/source?download=2"),
+    ("https://example.com/source#part1", "https://example.com/source#part2"),
+])
+def test_other_documents_and_legacy_dashboard_keep_url_deduplication(sources):
     for doc_type, content_type in [
         ("Documentation", "markdown"),
+        ("Learning Paths", "markdown"),
+        ("Install Guides", "html"),
         ("Ecosystem Dashboard", "html"),
     ]:
-        first = result("https://example.com", "first", doc_type, content_type)
-        second = result("https://example.com", "second", doc_type, content_type)
+        first = result("https://example.com", sources[0], doc_type, content_type)
+        second = result("https://example.com", sources[1], doc_type, content_type)
         assert deduplicate_urls([first, second]) == [first]
         assert deduplicate_urls([first, second], max_chunks_per_url=2) == [
             first,
             second,
         ]
+
+
+def test_distinct_public_pages_from_one_acquisition_source_survive():
+    source = "https://raw.githubusercontent.com/repo/main/guide.md"
+    first = result("https://learn.arm.com/learning-paths/example/install/", source, "Learning Paths")
+    second = result("https://learn.arm.com/learning-paths/example/configure/", source, "Learning Paths")
+    assert deduplicate_urls([first, second]) == [first, second]
+
+
+@pytest.mark.parametrize("public_url", [None, ""])
+def test_missing_public_url_falls_back_to_resolved_url(public_url):
+    source = "https://example.com/guide/#install"
+    fallback = result(public_url, source, "Documentation")
+    public = result(source, None, "Documentation")
+    assert deduplicate_urls([fallback, public]) == [fallback]
 
 
 def test_search_response_retains_dashboard_scope_and_defaults_for_old_metadata(
@@ -194,3 +217,20 @@ def test_fusion_keeps_dashboard_editions_and_collapses_source_file_aliases():
 
     assert [item["metadata"]["chunk_uuid"] for item in result] == ["commercial", "open"]
     assert [item["metadata"]["edition"] for item in result] == ["commercial", "open-source"]
+
+
+def test_fusion_uses_public_identity_across_acquisition_sources():
+    page = "https://learn.arm.com/learning-paths/example/install/"
+    source = "https://raw.githubusercontent.com/repo/main/guide.md"
+    items = [
+        passage("best", page, 0.5, source),
+        passage("duplicate", page, 0.1, source.replace("guide.md", "copy.md")),
+        passage("other", page.replace("/install/", "/configure/"), 0.2, source),
+    ]
+    for item in items:
+        item["metadata"].update(doc_type="Learning Paths", content_type="markdown")
+
+    results = search_module.fuse_semantic_resource_ranks(items)
+
+    assert [item["metadata"]["chunk_uuid"] for item in results] == ["best", "other"]
+    assert results[0]["metadata"] == items[0]["metadata"]

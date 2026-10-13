@@ -845,37 +845,28 @@ def hybrid_search(
 
 
 def _canonical_resource_key(metadata: Dict[str, Any]) -> Optional[tuple[str, str]]:
-    """Identify a section/resource and retain dashboard edition identity."""
+    """Identify a public section/resource and retain dashboard edition identity."""
+    # The fetch location may differ from the public page for any document type.
     url = metadata.get("url") or metadata.get("resolved_url")
     if not url:
         return None
     source = urlparse(url)
-    resolved = urlparse(metadata.get("resolved_url") or url)
+    query = sorted(
+        (key, val)
+        for key, val in parse_qsl(source.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+    )
+    canonical_url = urlunparse(
+        source._replace(
+            scheme=source.scheme.lower(),
+            netloc=source.netloc.lower(),
+            path=source.path.rstrip("/") or "/",
+            query=urlencode(query),
+        )
+    )
     dashboard = (
         metadata.get("doc_type") == "Ecosystem Dashboard"
         and metadata.get("content_type") == "markdown"
-    )
-    # Dashboard resolved_url is an acquisition file, not the public resource.
-    # Relative/invalid resolved values cannot replace an absolute public URL.
-    if dashboard or resolved.scheme not in {"http", "https"} or not resolved.netloc:
-        resolved = source
-
-    def resource_query(value: str) -> list[tuple[str, str]]:
-        return sorted(
-            (key, val)
-            for key, val in parse_qsl(value, keep_blank_values=True)
-            if not key.lower().startswith("utm_")
-        )
-
-    query = resource_query(source.query) or resource_query(resolved.query)
-    canonical_url = urlunparse(
-        resolved._replace(
-            scheme=resolved.scheme.lower(),
-            netloc=resolved.netloc.lower(),
-            path=resolved.path.rstrip("/") or "/",
-            query=urlencode(query),
-            fragment=source.fragment or resolved.fragment,
-        )
     )
     edition = str(metadata.get("edition") or "") if dashboard else ""
     return canonical_url, edition

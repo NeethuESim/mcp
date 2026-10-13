@@ -252,8 +252,16 @@ def is_navigation_only(metadata: Dict[str, Any]) -> bool:
     if lines and set(lines) <= {"log an issue", "fork and edit", "discuss on discord"}:
         return True
     source = urlparse(metadata.get("url", "") or "")
+    heading_path = metadata.get("heading_path") or []
+    # Extracted chapter menus repeat the page heading around chapter headings.
+    # A title anchor and short unpunctuated lines alone can also be instructions.
     return (
         source.netloc.lower() == "learn.arm.com"
+        and isinstance(heading_path, list)
+        and len(heading_path) >= 4
+        and heading_path[0] == heading_path[-1] == metadata.get("heading")
+        and heading_path[1].strip().casefold() == "introduction"
+        and all(heading.strip().casefold() in lines for heading in heading_path[1:-1])
         and source.fragment in {"learning-path-title", "learning-path-step-active", "install-guide-title"}
         and len(lines) >= 3
         and lines[0] == "introduction"
@@ -361,9 +369,8 @@ def _score_lexical_exactness(query: _QueryAnalysis, metadata: Dict[str, Any]) ->
             }
         else:
             field_text = _metadata_text(metadata, fields)
-            field_tokens = _query_field_tokens(
-                set(tokenize_for_search(field_text)), query_tokens
-            )
+            field_tokens = set(tokenize_for_search(field_text))
+        field_tokens = _query_field_tokens(field_tokens, query_tokens)
         if not field_tokens:
             continue
         overlap = _token_match_count(
@@ -647,9 +654,11 @@ def _rerank_candidates(
         heading_tokens = _query_field_tokens(
             set(tokenize_for_search(heading_text)), query_tokens
         )
-        url_tokens = set(tokenize_url_content_for_search(source_url))
-        resolved_url_tokens = set(
-            tokenize_url_content_for_search(metadata.get("resolved_url", ""))
+        url_tokens = _query_field_tokens(
+            set(tokenize_url_content_for_search(source_url)), query_tokens
+        )
+        resolved_url_tokens = _query_field_tokens(
+            set(tokenize_url_content_for_search(metadata.get("resolved_url", ""))), query_tokens
         )
         title_url_tokens = title_tokens | url_tokens | resolved_url_tokens
         support_evidence_bonus = _support_evidence_score(

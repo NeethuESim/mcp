@@ -356,6 +356,35 @@ def test_architecture_alias_matches_without_conflating_arm32(query, architecture
     assert ranked[0]["metadata"]["chunk_uuid"] == "new"
 
 
+@pytest.mark.parametrize("query,alias", [("arm64", "aarch64"), ("aarch64", "arm64")])
+@pytest.mark.parametrize("field", ["url", "resolved_url"])
+@pytest.mark.parametrize("template", [
+    "https://example.com/downloads/{architecture}/",
+    "https://example.com/downloads/?architecture={architecture}",
+    "https://example.com/downloads/#{architecture}",
+])
+def test_url_architecture_alias_scores_like_exact_match(query, alias, field, template):
+    def metadata(architecture):
+        return {
+            "title": "Utility downloads",
+            "search_text": "Download the utility",
+            field: template.format(architecture=architecture),
+        }
+
+    exact, equivalent, arm32 = (metadata(architecture) for architecture in (query, alias, "arm32"))
+    lexical_scores = [search_module._lexical_exactness_score(query, item) for item in (exact, equivalent, arm32)]
+    assert lexical_scores[0] == pytest.approx(lexical_scores[1])
+    assert lexical_scores[1] > lexical_scores[2]
+
+    # Fix the lexical contribution at zero to test reranking's own URL overlap.
+    rerank_scores = [
+        search_module.rerank_candidates(query, [{"metadata": item, "lexical_exactness_score": 0.0}])[0]["rerank_score"]
+        for item in (exact, equivalent, arm32)
+    ]
+    assert rerank_scores[0] == pytest.approx(rerank_scores[1])
+    assert rerank_scores[1] > rerank_scores[2]
+
+
 def test_compact_alias_does_not_join_generic_prose():
     plain = passage("plain", "Instructions", "Ordinary instructions.")
     prose = passage("prose", "Set up", "Ordinary instructions.")
@@ -368,6 +397,7 @@ def test_chapter_navigation_does_not_displace_task_instructions():
         'nav', 'Run a utility on Arm',
         'Document Title: Run a utility on Arm\nHeading Path: Introduction\n\n'
         'Introduction\nSet up your environment\nRun a utility on Arm\nNext Steps',
+        heading_path=['Run a utility on Arm', 'Introduction', 'Set up your environment', 'Run a utility on Arm'],
         url='https://learn.arm.com/learning-paths/servers-and-cloud-computing/utility/#learning-path-step-active',
     )
     instructions = passage('useful', 'Utility', 'Run utility --help to check the installation.')
@@ -375,11 +405,18 @@ def test_chapter_navigation_does_not_displace_task_instructions():
     assert [r['metadata']['chunk_uuid'] for r in ranked] == ['useful']
 
 
-def test_substantive_intro_at_navigation_anchor_is_retained():
+@pytest.mark.parametrize("anchor", ["learning-path-title", "learning-path-step-active", "install-guide-title"])
+@pytest.mark.parametrize("instructions", [
+    "Install the utility, then run utility --help.",
+    "Install the utility\nRun utility --help",
+    "Install the utility\nRun the utility",
+])
+def test_substantive_intro_at_navigation_anchor_is_retained(anchor, instructions):
     intro = passage(
         'intro', 'Utility',
-        'Introduction\nInstall the utility, then run utility --help.\nNext Steps',
-        url='https://learn.arm.com/learning-paths/servers-and-cloud-computing/utility/#learning-path-title',
+        f'Introduction\n{instructions}\nNext Steps',
+        url=f'https://learn.arm.com/learning-paths/servers-and-cloud-computing/utility/#{anchor}',
+        heading_path=['Utility', 'Introduction'],
     )
     assert search_module.rerank_candidates('utility', [intro])
 

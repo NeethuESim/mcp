@@ -53,7 +53,8 @@ def chunk(row_id, **metadata):
 
 def index_for(vectors):
     index = Index(ndim=2, metric="l2sq", dtype="f32")
-    index.add(np.arange(len(vectors)), np.asarray(vectors, dtype=np.float32))
+    # Keep synthetic ANN fixtures stable across platforms and CPU counts.
+    index.add(np.arange(len(vectors)), np.asarray(vectors, dtype=np.float32), threads=1)
     return index
 
 
@@ -261,6 +262,50 @@ def test_learning_path_root_bonus_requires_learning_path_intent(public_url):
 
     assert ordinary_scores["root"] - ordinary_scores["other"] < 0.5
     assert explicit_scores["root"] - explicit_scores["other"] > 0.5
+
+
+@pytest.mark.parametrize("field", ["url", "resolved_url"])
+@pytest.mark.parametrize("value", [None, "", "missing"])
+def test_empty_url_fields_do_not_match_none(field, value):
+    metadata = {"title": "Utility", "url": "https://example.com/utility",
+                "resolved_url": "https://example.com/utility"}
+    if value == "missing":
+        metadata.pop(field)
+    else:
+        metadata[field] = value
+    assert search_module._lexical_exactness_score("none", metadata) == 0.0
+    ranked = search_module.rerank_candidates("none", [{"metadata": metadata}])
+    assert ranked[0]["rerank_score"] == 0.0
+    metadata[field] = "https://example.com/none"
+    assert search_module._lexical_exactness_score("none", metadata) > 0.0
+
+
+@pytest.mark.parametrize("architecture", ["arm64", "aarch64"])
+@pytest.mark.parametrize("suffix", ["", " package"])
+@pytest.mark.parametrize("stage", ["lexical", "rerank"])
+def test_phrase_scoring_treats_architecture_aliases_equally(architecture, suffix, stage):
+    query = f"download {architecture}{suffix}"
+
+    def score(title):
+        metadata = {"title": title, "url": "https://example.com/utility"}
+        if stage == "lexical":
+            return search_module._lexical_exactness_score(query, metadata)
+        # Isolate reranking's phrase bonus from its lexical contribution.
+        candidate = {"metadata": metadata, "lexical_exactness_score": 0.0}
+        return search_module.rerank_candidates(query, [candidate])[0]["rerank_score"]
+
+    exact = score(f"Download Arm64{suffix}")
+    equivalent = score(f"Download AARCH64{suffix}")
+    assert exact == pytest.approx(equivalent)
+    assert equivalent > score(f"Arm64{suffix} Download")
+    assert equivalent > score(f"Download Arm32{suffix}")
+
+
+@pytest.mark.parametrize("name", ["myaarch64", "aarch64tool", "aarch64_tool"])
+def test_phrase_alias_normalization_preserves_larger_names(name):
+    title = f"Download {name}"
+    assert search_module._field_phrase_bonus(["download", "arm64"], title) == 0.0
+    assert search_module._field_phrase_bonus(["download", name], title) == pytest.approx(0.10)
 
 
 def test_query_tokenization_does_not_grow_with_rerank_candidate_count(monkeypatch):

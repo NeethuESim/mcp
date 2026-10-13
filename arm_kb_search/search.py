@@ -363,7 +363,7 @@ def _score_lexical_exactness(query: _QueryAnalysis, metadata: Dict[str, Any]) ->
                 token
                 for field in fields
                 for token in tokenize_url_content_for_search(
-                    str(metadata.get(field, ""))
+                    str(metadata.get(field) or "")
                 )
             }
         else:
@@ -545,7 +545,8 @@ def _field_phrase_bonus(
     weights: tuple[float, float] = (0.10, 0.16), limit: Optional[float] = 0.40,
 ) -> float:
     """Score adjacent pairs/triples in order, with the caller's weights and cap."""
-    field_text = field_text.lower()
+    query_terms = [re.sub(r"\baarch64\b", "arm64", term.lower()) for term in query_terms]
+    field_text = re.sub(r"\baarch64\b", "arm64", field_text.lower())
     bonus = 0.0
     for size, weight in enumerate(weights, start=2):
         for index in range(len(query_terms) - size + 1):

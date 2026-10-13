@@ -231,13 +231,18 @@ def test_lexical_exactness_ignores_url_hostname():
     )
 
 
-def test_learning_path_root_bonus_requires_learning_path_intent():
+@pytest.mark.parametrize("public_url", ["present", "missing", None, ""])
+def test_learning_path_root_bonus_requires_learning_path_intent(public_url):
     root = candidate(
         "root",
         "Docker",
         "https://learn.arm.com/learning-paths/servers-and-cloud-computing/docker/",
         doc_type="Learning Paths",
     )
+    if public_url != "present":
+        del root["metadata"]["url"]
+        if public_url != "missing":
+            root["metadata"]["url"] = public_url
     other = candidate(
         "other",
         "Docker",
@@ -348,6 +353,23 @@ def test_empty_query_has_no_results(query):
     assert resources.search(query, assets) == []
 
 
+@pytest.mark.parametrize("architecture", ["arm64", "aarch64"])
+@pytest.mark.parametrize("filters", [None, {"platform": "linux"}])
+def test_sparse_search_retrieves_architecture_aliases_before_reranking(architecture, filters):
+    metadata = [
+        chunk(0, search_text=architecture, platform="linux"),
+        chunk(1, search_text=architecture, platform="windows"),
+        chunk(2, search_text="arm32"),
+        chunk(3, search_text="database"),
+        chunk(4, search_text="network"),
+    ]
+    state = SearchResources(metadata, None, None, build_bm25_index(metadata), include_disclaimers=False)
+    expected = {"https://example.com/0"} if filters else {"https://example.com/0", "https://example.com/1"}
+    for query in ("arm64", "aarch64"):
+        hits = search(query, state, k=5, filters=filters)
+        assert {hit["url"] for hit in hits} == expected
+
+
 @pytest.mark.parametrize("query,architecture", [("arm64", "aarch64"), ("aarch64", "arm64")])
 def test_architecture_alias_matches_without_conflating_arm32(query, architecture):
     arm32 = passage("old", "Installation", "Download the arm32 package.")
@@ -392,7 +414,8 @@ def test_compact_alias_does_not_join_generic_prose():
     assert ranked[0]["rerank_score"] == ranked[1]["rerank_score"]
 
 
-def test_chapter_navigation_does_not_displace_task_instructions():
+@pytest.mark.parametrize("public_url", ["present", "missing", None, ""])
+def test_chapter_navigation_does_not_displace_task_instructions(public_url):
     navigation = passage(
         'nav', 'Run a utility on Arm',
         'Document Title: Run a utility on Arm\nHeading Path: Introduction\n\n'
@@ -400,6 +423,11 @@ def test_chapter_navigation_does_not_displace_task_instructions():
         heading_path=['Run a utility on Arm', 'Introduction', 'Set up your environment', 'Run a utility on Arm'],
         url='https://learn.arm.com/learning-paths/servers-and-cloud-computing/utility/#learning-path-step-active',
     )
+    navigation["metadata"]["resolved_url"] = navigation["metadata"]["url"]
+    if public_url != "present":
+        del navigation["metadata"]["url"]
+        if public_url != "missing":
+            navigation["metadata"]["url"] = public_url
     instructions = passage('useful', 'Utility', 'Run utility --help to check the installation.')
     ranked = search_module.rerank_candidates('run utility on arm', [navigation, instructions])
     assert [r['metadata']['chunk_uuid'] for r in ranked] == ['useful']

@@ -46,7 +46,7 @@ retrieval uses exact search; unfiltered retrieval uses ANN.
 ## Retrieval behavior
 
 Keyword search uses tokens from document search text; vector search embeds the
-original query. Field scoring recognizes Arm64/AArch64 equivalents.
+original query. Keyword matching and field scoring recognize Arm64/AArch64 equivalents.
 Short execution requests prioritize the named tool over generic action words.
 
 Installation intent includes "set up". When a short installation subject precedes

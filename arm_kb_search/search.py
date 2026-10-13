@@ -250,7 +250,7 @@ def is_navigation_only(metadata: Dict[str, Any]) -> bool:
     lines = [line.strip().casefold() for line in text.splitlines() if line.strip()]
     if lines and set(lines) <= {"log an issue", "fork and edit", "discuss on discord"}:
         return True
-    source = urlparse(metadata.get("url", "") or "")
+    source = urlparse(metadata.get("url") or metadata.get("resolved_url") or "")
     heading_path = metadata.get("heading_path") or []
     # Extracted chapter menus repeat the page heading around chapter headings.
     # A title anchor and short unpunctuated lines alone can also be instructions.
@@ -418,8 +418,13 @@ def _rank_lexical_candidates(
         pinned.append({**candidate, "lexical_prepass_rank": rank, "pinned_lexical": True})
     return pinned
 
+def _bm25_tokens(text: str) -> List[str]:
+    """Use one sparse-search term for the Arm64/AArch64 architecture aliases."""
+    return ["arm64" if token == "aarch64" else token for token in tokenize_for_search(text)]
+
+
 def build_bm25_index(metadata: List[Dict]) -> Optional[BM25Okapi]:
-    corpus = [tokenize_for_search(item.get("search_text", "")) for item in metadata]
+    corpus = [_bm25_tokens(item.get("search_text", "")) for item in metadata]
     if not any(corpus):
         return None
     return BM25Okapi(corpus)
@@ -497,7 +502,7 @@ def bm25_search(
 ) -> List[Dict[str, Any]]:
     if bm25_index is None or eligible_ids == ():
         return []
-    tokens = tokenize_for_search(query)
+    tokens = _bm25_tokens(query)
     if not tokens:
         return []
     if eligible_ids is None:
@@ -645,7 +650,7 @@ def _rerank_candidates(
         title_text = _metadata_text(metadata, ("title",))
         heading_text = _metadata_text(metadata, ("heading", "heading_path"))
         url_text = _metadata_text(metadata, ("url", "resolved_url"))
-        source_url = metadata.get("url", "") or ""
+        source_url = metadata.get("url") or metadata.get("resolved_url") or ""
 
         title_tokens = _query_field_tokens(
             set(tokenize_for_search(title_text)), query_tokens

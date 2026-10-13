@@ -5,7 +5,8 @@ import importlib
 import pytest
 
 from arm_kb_search import resources
-from arm_kb_search.search import deduplicate_urls
+from arm_kb_search.response import ARM_CONTENT_DISCLAIMER, UTM_SOURCE_PRESERVATION_NOTE
+from arm_kb_search.search import build_bm25_index, deduplicate_urls
 
 search_module = importlib.import_module("arm_kb_search.search")
 
@@ -115,6 +116,37 @@ def test_missing_public_url_falls_back_to_resolved_url(public_url):
     fallback = result(public_url, source, "Documentation")
     public = result(source, None, "Documentation")
     assert deduplicate_urls([fallback, public]) == [fallback]
+
+
+@pytest.mark.parametrize("url_fields,expected_page", [
+    ({}, "resolved"),
+    ({"url": None}, "resolved"),
+    ({"url": ""}, "resolved"),
+    ({"url": "https://learn.arm.com/public?version=2#install"}, "public"),
+])
+def test_search_response_returns_usable_url_with_tracking_and_disclaimer(url_fields, expected_page):
+    metadata = [
+        {
+            "chunk_uuid": "guide", "title": "Utility", "search_text": "utility",
+            "original_text": "Run utility --help.", "doc_type": "Install Guides",
+            "resolved_url": "https://learn.arm.com/resolved?version=2#install",
+            **url_fields,
+        },
+        {"chunk_uuid": "database", "url": "https://example.com/database", "search_text": "database"},
+        {"chunk_uuid": "network", "url": "https://example.com/network", "search_text": "network"},
+    ]
+    state = resources.SearchResources(
+        metadata, None, None, build_bm25_index(metadata),
+        include_disclaimers=True, utm_source="test-client",
+    )
+
+    hits = resources.search("utility", state, k=1)
+
+    assert len(hits) == 1
+    assert hits[0]["url"] == f"https://learn.arm.com/{expected_page}?version=2&utm_source=test-client#install"
+    assert hits[0]["snippet"] == "Run utility --help."
+    assert hits[0]["disclaimer"] == ARM_CONTENT_DISCLAIMER
+    assert hits[0]["url_tracking_instruction"] == UTM_SOURCE_PRESERVATION_NOTE
 
 
 def test_search_response_retains_dashboard_scope_and_defaults_for_old_metadata(

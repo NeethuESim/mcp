@@ -162,7 +162,7 @@ def search(
 
     formatted = [
         {
-            "url": item["metadata"].get("url"),
+            "url": item["metadata"].get("url") or item["metadata"].get("resolved_url"),
             "snippet": item["metadata"].get("original_text", item["metadata"].get("content", "")),
             "title": item["metadata"].get("title", ""),
             "heading": item["metadata"].get("heading", ""),

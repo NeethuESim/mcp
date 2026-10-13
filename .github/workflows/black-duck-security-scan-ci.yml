@@ -198,7 +198,7 @@ jobs:
           set -euo pipefail
           if [[ "${HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}" ]]; then
             message="Fork pull requests cannot run credentialed Black Duck checks. "
-            message+="Use the Manage reviewed fork pull request workflow, then "
+            message+="Use the Promote reviewed fork pull request workflow, then "
             message+="review and merge the internal pull request it creates. "
             message+="Do not merge this source pull request."
             echo "::error title=Merge the promoted internal pull request::${message}"

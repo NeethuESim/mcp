@@ -5,10 +5,10 @@
 - Promotes an exact, reviewed fork commit into an immutable same-repository
   branch and pull request where credentialed Black Duck checks can run safely.
 - Keeps the original fork pull request as the canonical discussion thread and
-  closes it only after its matching internal pull request merges.
-- Uses SHA pinning, App-authenticated lifecycle markers, and event-driven
-  reconciliation to protect against stale revisions, spoofed comments, and
-  concurrent updates.
+  leaves it open for a maintainer to close manually after the internal pull
+  request merges.
+- Uses SHA pinning and explicit maintainer promotion to prevent a stale or
+  unreviewed revision from entering the credentialed workflow.
 
 ## Process flow
 
@@ -23,8 +23,8 @@
 - The required Black Duck check runs on the promoted pull request.
 - If changes are requested, the contributor pushes a new SHA to the original
   fork pull request and the authorization and promotion process repeats.
-- After the internal pull request merges, finalization closes only the matching
-  source revision; a newer revision remains or is restored to open.
+- After the internal pull request merges, the merging maintainer closes the
+  original fork pull request manually.
 
 ## Promotion paths
 
@@ -56,34 +56,30 @@ request, it verifies that the branch head still matches the SHA in its name
 before exposing credentials. Do not use **Update branch** or manually modify a
 promoted branch; either action invalidates this guard.
 
-The scan checks out the exact pull request head and creates a source ZIP from
-the raw contents of every tracked Git blob without running repository code.
+The scan checks out the exact pull request head and creates an isolated source
+directory from the raw contents of every tracked Git blob without running
+repository code.
 The inline exporter runs Python in isolated mode (`python3 -I`) and reads Git
 objects with `git ls-tree` and `git cat-file`; it cannot import modules or site
 customizations from the contributor checkout. It does not use `git archive`,
 checkout filters, or contributor-controlled `.gitattributes`, so
 `export-ignore` and `export-subst` cannot omit or rewrite reviewed files.
-Unsupported tree paths fail the job rather than producing a partial scan. The
-scan job has read-only repository permissions and receives no token capable of
-commenting on or changing the pull request.
+Executable files and symlink targets are materialized as non-executable regular
+files, and unsupported tree paths fail the job rather than producing a partial
+scan. Black Duck receives this directory through its `project_directory` input.
+The scan job has read-only repository permissions and receives no token capable
+of commenting on or changing the pull request.
 
 `Main Push and Scheduled full source scan` is the separate full scan for `main`
 pushes and scheduled runs; it is not a pull-request merge gate.
 
-## Finalization and reconciliation
+## Manual source pull request closure
 
-Finalization uses a close, re-read, and reopen protocol. A later
-`pull_request_target` `synchronize` event also reopens a source pull request if
-a new SHA arrives after the final read. The new revision then returns to the
-normal authorization process.
-
-Promotion also records the fork's immutable GitHub repository ID with the
-source pull request number and reviewed SHA in the internal pull request. If the
-contributor later deletes the fork and GitHub returns `head.repo: null`,
-finalization uses that stored identity and the still-reported head SHA to close
-and comment on the source pull request safely. Older promotions without the
-stored repository ID continue to finalize while the fork exists, but fail
-closed if its identity is no longer available.
+The workflow never closes or reopens the original fork pull request. After the
+matching internal pull request has merged, the merging maintainer verifies the
+source link in the internal pull request body and closes the source pull request
+manually. This avoids race-prone state reconciliation when the contributor
+updates the fork while the internal pull request is merging.
 
 ## GitHub App configuration
 
@@ -105,17 +101,13 @@ Configured the repository with:
 
 The App token is used so the internal PR triggers normal `pull_request`
 workflows without the approval-required behavior applied to PRs created by the
-built-in `GITHUB_TOKEN`. The workflow also passes the App slug reported by the
-token action to the lifecycle helper. Promotion, finalization, and
-reconciliation markers are authoritative only when GitHub reports the comment's
-`performed_via_github_app.slug` as that configured App; contributor-authored
-lookalike markers are ignored.
+built-in `GITHUB_TOKEN`. Comments created by the promotion helper are
+informational only and are not used as workflow state.
 
 ## Actions policy
 
 Automatic promotion uses `pull_request_target`, but the workflow checks out
 only `main` and treats the fork revision strictly as an opaque Git object. It
 never checks out or executes fork content. The organization Actions policy must
-allow `pull_request_target` for this workflow, including the `closed` event used
-to finalize a merged internal pull request, and must allow `workflow_dispatch`
-for explicit maintainer promotion.
+allow `pull_request_target` for this workflow and `workflow_dispatch` for
+explicit maintainer promotion.

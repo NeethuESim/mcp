@@ -574,7 +574,7 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "pull_request_target:" in triggers
     assert "workflow_dispatch:" in triggers
     assert (
-        "types: [opened, reopened, synchronize, ready_for_review, closed]"
+        "types: [opened, reopened, synchronize, ready_for_review]"
         in triggers
     )
     assert "!github.event.pull_request.draft" in FORK_PROMOTION_WORKFLOW
@@ -584,16 +584,15 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
         FORK_PROMOTION_WORKFLOW
     )
     assert "actions/create-github-app-token@" in FORK_PROMOTION_WORKFLOW
-    assert "outputs.app-slug" in FORK_PROMOTION_WORKFLOW
-    assert "GH_APP_SLUG:" in FORK_PROMOTION_WORKFLOW
     assert "permission-contents: write" in FORK_PROMOTION_WORKFLOW
     assert "permission-pull-requests: write" in FORK_PROMOTION_WORKFLOW
     assert "permission-workflows:" not in FORK_PROMOTION_WORKFLOW
-    assert "github.event.pull_request.merged == true" in FORK_PROMOTION_WORKFLOW
-    assert "finalize" in FORK_PROMOTION_WORKFLOW
-    assert "--internal-pull-number" in FORK_PROMOTION_WORKFLOW
-    assert '"${EVENT_ACTION}" == "synchronize"' in FORK_PROMOTION_WORKFLOW
-    assert "reconcile" in FORK_PROMOTION_WORKFLOW
+    assert (
+        "github.event.pull_request.merged == true"
+        not in FORK_PROMOTION_WORKFLOW
+    )
+    assert "finalize" not in FORK_PROMOTION_WORKFLOW
+    assert "reconcile" not in FORK_PROMOTION_WORKFLOW
     assert '--expected-sha "${EXPECTED_SHA}"' in FORK_PROMOTION_WORKFLOW
     assert "GH_APP_TOKEN" in FORK_PROMOTION_WORKFLOW
     assert "actions/checkout" not in FORK_PROMOTION_SCRIPT
@@ -601,7 +600,9 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "MAX_PULL_REQUEST_FILES = 3_000" in FORK_PROMOTION_SCRIPT
     assert "external-contributions/pr-" in FORK_PROMOTION_SCRIPT
     assert "trusted-fork-{username}/pr-" in FORK_PROMOTION_SCRIPT
-    assert "performed_via_github_app" in FORK_PROMOTION_SCRIPT
+    assert "close_source_pr" not in FORK_PROMOTION_SCRIPT
+    assert "reconcile_source_pr" not in FORK_PROMOTION_SCRIPT
+    assert "finalize_internal_pr" not in FORK_PROMOTION_SCRIPT
     assert "gh pr merge" not in FORK_PROMOTION_WORKFLOW
 
     fork_guard = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
@@ -609,7 +610,7 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
         maxsplit=1,
     )[1]
     assert '"${HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}"' in fork_guard
-    assert "Manage reviewed fork pull request workflow" in fork_guard
+    assert "Promote reviewed fork pull request workflow" in fork_guard
     assert "Do not merge this source pull request" in fork_guard
     assert "exit 1" in fork_guard
 

@@ -2,13 +2,19 @@
 
 ## Summary
 
-- Promotes an exact, reviewed fork commit into an immutable same-repository
+- Promotes an exact, authorized fork commit into a SHA-addressed same-repository
   branch and pull request where credentialed Black Duck checks can run safely.
 - Keeps the original fork pull request as the canonical discussion thread and
   leaves it open for a maintainer to close manually after the internal pull
   request merges.
-- Uses SHA pinning and explicit maintainer promotion to prevent a stale or
-  unreviewed revision from entering the credentialed workflow.
+- Uses SHA pinning, write-level trust checks, and explicit maintainer promotion for untrusted forks.
+
+### Fork PR Behavior
+
+| Source | Original Fork PR | Promotion | Black Duck Scan |
+| --- | --- | --- | --- |
+| Trusted fork | Deliberately fails before checkout | Automatic when both the author and triggering user have write-level access | Runs on the `trusted-fork-*` internal pull request |
+| Untrusted fork | Deliberately fails before checkout | A maintainer manually promotes the exact reviewed SHA | Runs on the `external-contributions/*` internal pull request |
 
 ## Process flow
 
@@ -18,7 +24,7 @@
 - The exact fork head SHA follows one of the promotion paths below.
 - The workflow applies the promotion safeguards before creating an internal
   pull request.
-- The workflow creates or reopens an immutable internal pull request and closes
+- The workflow creates or reopens a SHA-addressed internal pull request and closes
   older open, unmerged promotions as superseded.
 - The required Black Duck check runs on the promoted pull request.
 - If changes are requested, the contributor pushes a new SHA to the original

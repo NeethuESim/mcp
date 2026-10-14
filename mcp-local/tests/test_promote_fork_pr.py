@@ -30,6 +30,12 @@ SPEC.loader.exec_module(PROMOTION)
 
 
 SHA = "a" * 40
+APP_SLUG = "arm-mcp-promotion"
+
+
+@pytest.fixture(autouse=True)
+def configured_promotion_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GH_APP_SLUG", APP_SLUG)
 
 
 def source_pr(*, sha: str = SHA, draft: bool = False) -> dict:
@@ -61,13 +67,14 @@ def internal_pr(
     branch: str | None = None,
     state: str = "open",
     merged: bool = False,
+    app_slug: str | None = APP_SLUG,
 ) -> dict:
     branch = branch or f"external-contributions/pr-{source_number}-{sha}"
     marker = (
         "<!-- fork-promotion: "
         f"source-pr={source_number} source-sha={sha} -->"
     )
-    return {
+    pull = {
         "number": number,
         "state": state,
         "merged": merged,
@@ -80,6 +87,9 @@ def internal_pr(
             "repo": {"full_name": "arm/mcp"},
         },
     }
+    if app_slug is not None:
+        pull["performed_via_github_app"] = {"slug": app_slug}
+    return pull
 
 
 def test_promotion_branch_names_match_trust_classification() -> None:
@@ -292,6 +302,49 @@ def test_replacement_internal_pr_closes_the_superseded_revision(
     assert comments == [
         (186, f"Superseded by {current_url}. Do not merge this older revision.")
     ]
+
+
+@pytest.mark.parametrize("app_slug", [None, "lookalike-app"])
+def test_lookalike_internal_pr_is_not_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    app_slug: str | None,
+) -> None:
+    lookalike = internal_pr(app_slug=app_slug)
+
+    class NoMutationApi:
+        def get(self, _path: str) -> None:
+            pytest.fail("an unattributed PR must not be re-read for mutation")
+
+        def patch(self, _path: str, _payload: dict) -> None:
+            pytest.fail("an unattributed PR must not be closed")
+
+    monkeypatch.setattr(
+        PROMOTION,
+        "paginated_get",
+        lambda *_args: [lookalike],
+    )
+    monkeypatch.setattr(
+        PROMOTION,
+        "post_comment",
+        lambda *_args: pytest.fail("an unattributed PR must not be commented on"),
+    )
+
+    assert PROMOTION.supersede_internal_prs(
+        NoMutationApi(),
+        "arm/mcp",
+        185,
+        f"external-contributions/pr-185-{'b' * 40}",
+        "https://github.com/arm/mcp/pull/187",
+    ) == []
+
+
+def test_invalid_promotion_app_slug_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GH_APP_SLUG", "")
+
+    with pytest.raises(RuntimeError, match="GH_APP_SLUG"):
+        PROMOTION.internal_pr_identity(internal_pr(), "arm/mcp")
 
 
 @pytest.mark.parametrize(

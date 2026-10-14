@@ -67,6 +67,7 @@ jobs:
 
       - name: Promote exact reviewed fork revision
         env:
+          GH_APP_SLUG: ${{ steps.promotion-token.outputs.app-slug }}
           GH_TOKEN: ${{ steps.promotion-token.outputs.token }}
           PROMOTION_MODE: ${{ github.event_name == 'workflow_dispatch' && 'manual' || 'auto' }}
           PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request_number }}

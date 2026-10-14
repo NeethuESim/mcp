@@ -36,6 +36,7 @@ WORKFLOW_DIRECTORY = ".github/workflows/"
 MAX_PULL_REQUEST_FILES = 3_000
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}")
 LOGIN_PATTERN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
+APP_SLUG_PATTERN = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?")
 PROMOTION_SUFFIX_PATTERN = re.compile(
     r"pr-(?P<pull_number>[1-9][0-9]*)-"
     r"(?P<sha>[0-9a-fA-F]{40}|[0-9a-fA-F]{64})"
@@ -340,10 +341,26 @@ def create_internal_pr(
     )
 
 
+def promotion_app_slug() -> str:
+    """Return the configured GitHub App slug used for promotion."""
+    app_slug = os.environ.get("GH_APP_SLUG", "").strip()
+    if not APP_SLUG_PATTERN.fullmatch(app_slug):
+        raise RuntimeError(
+            "GH_APP_SLUG must contain the promotion GitHub App slug"
+        )
+    return app_slug
+
+
 def internal_pr_identity(
     pull: dict[str, Any], repository: str
 ) -> tuple[int, str, str] | None:
     """Return source PR, SHA, and branch for a promoted internal PR."""
+    app = pull.get("performed_via_github_app") or {}
+    if (
+        not isinstance(app, dict)
+        or app.get("slug") != promotion_app_slug()
+    ):
+        return None
     base = pull.get("base") or {}
     base_repo = base.get("repo") or {}
     head = pull.get("head") or {}
@@ -408,7 +425,7 @@ def supersede_internal_prs(
     current_branch: str,
     current_url: str,
 ) -> list[str]:
-    """Close older open internal PRs after their replacement exists."""
+    """Close older App-created internal PRs after their replacement exists."""
     pulls = paginated_get(
         api,
         f"/repos/{repository}/pulls",

@@ -588,6 +588,10 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "permission-pull-requests: write" in FORK_PROMOTION_WORKFLOW
     assert "permission-workflows:" not in FORK_PROMOTION_WORKFLOW
     assert (
+        "GH_APP_SLUG: ${{ steps.promotion-token.outputs.app-slug }}"
+        in FORK_PROMOTION_WORKFLOW
+    )
+    assert (
         "github.event.pull_request.merged == true"
         not in FORK_PROMOTION_WORKFLOW
     )
@@ -600,6 +604,7 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "MAX_PULL_REQUEST_FILES = 3_000" in FORK_PROMOTION_SCRIPT
     assert "external-contributions/pr-" in FORK_PROMOTION_SCRIPT
     assert "trusted-fork-{username}/pr-" in FORK_PROMOTION_SCRIPT
+    assert 'pull.get("performed_via_github_app")' in FORK_PROMOTION_SCRIPT
     assert "close_source_pr" not in FORK_PROMOTION_SCRIPT
     assert "reconcile_source_pr" not in FORK_PROMOTION_SCRIPT
     assert "finalize_internal_pr" not in FORK_PROMOTION_SCRIPT

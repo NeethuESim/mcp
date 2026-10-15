@@ -41,6 +41,38 @@ used to generate the index, keeping the model, metadata, and index together as
 one immutable artifact. It is published privately as
 `ghcr.io/arm/mcp-embedding-vectorstore`.
 
+## Embedding input contract
+
+The model and locked weights remain `sentence-transformers/all-MiniLM-L6-v2`
+(revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`), with 384 dimensions.
+Document and query loaders set the model window to 512. Built-in normalization
+and existing query handling remain enabled; generation explicitly requests
+normalized float32 output.
+
+After the existing chunking and metadata construction, the generator counts the
+complete `original_text` with MiniLM's tokenizer, including special tokens.
+Records at or below 500 tokens are unchanged. Oversized documentation and
+intrinsics use the verified 500-cap experiment's character offsets and whitespace
+boundaries: consecutive slices, no added overlap, no stripped characters.
+Existing repetition between original records remains. Every piece keeps its
+URLs, anchors, titles and metadata, with distinct IDs and parent/offset fields.
+The single index stores and returns pieces; retrieval scoring is unchanged.
+
+A fresh build encodes the final piece list in order, using a separate `encode()`
+call for each consecutive group of 32. It defaults to CPU, float32, evaluation
+mode, seed 0, two CPU threads and one interop thread. `--device mps` or
+`--device cuda` selects another device explicitly. Use the locked toolchain and
+record device/hardware when comparing results; ANN results can change with tiny
+floating-point differences. The saved 332/408 experiment instead reused 33,810
+unchanged vectors from an earlier 512 build and encoded 9,776 new pieces
+separately. This fresh-build procedure does not promise identical vectors or
+rankings and needs no experiment artifacts at runtime.
+
+Tokenizer tests load the pinned model from `.cache/embedding-model`, or from
+`MINILM_MODEL_PATH`. Run `uv run --locked python acquire-model.py --output
+.cache/embedding-model` first; CI does this before testing. Without a local
+model, those integration tests are explicitly skipped.
+
 ## Promote an Embedding Build into MCP
 
 The embedding pipeline publishes candidates; it does not cause the MCP image

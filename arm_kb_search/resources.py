@@ -66,7 +66,7 @@ def load_embedding_model(
 ) -> SentenceTransformer:
     resolved_cache_folder = cache_folder if cache_folder is not None else sentence_transformer_cache_folder()
     try:
-        return SentenceTransformer(
+        model = SentenceTransformer(
             model_name_or_path,
             cache_folder=resolved_cache_folder,
             local_files_only=True,
@@ -79,12 +79,15 @@ def load_embedding_model(
             f"Local cache miss for embedding model '{model_name_or_path}', "
             f"retrying with network access: {exc}"
         )
-        return SentenceTransformer(
+        model = SentenceTransformer(
             model_name_or_path,
             cache_folder=resolved_cache_folder,
             local_files_only=False,
             trust_remote_code=False,
         )
+
+    model.max_seq_length = 512
+    return model
 
 
 def load_search_resources(

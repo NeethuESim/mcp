@@ -62,7 +62,7 @@ def test_vectorstore_serialization_preserves_dashboard_scope(tmp_path, monkeypat
     )
     monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: records)
     monkeypatch.setattr(
-        vectorstore, "create_embeddings", lambda *args: np.eye(2, dtype=np.float32)
+        vectorstore, "create_embeddings", lambda metadata, *args: (np.eye(2, dtype=np.float32), metadata)
     )
     vectorstore.main()
     metadata = json.loads((tmp_path / "metadata.json").read_text())

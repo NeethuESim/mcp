@@ -355,10 +355,12 @@ def internal_pr_identity(
     pull: dict[str, Any], repository: str
 ) -> tuple[int, str, str] | None:
     """Return source PR, SHA, and branch for a promoted internal PR."""
-    app = pull.get("performed_via_github_app") or {}
+    app_slug = promotion_app_slug()
+    user = pull.get("user") or {}
     if (
-        not isinstance(app, dict)
-        or app.get("slug") != promotion_app_slug()
+        not isinstance(user, dict)
+        or user.get("type") != "Bot"
+        or user.get("login") != f"{app_slug}[bot]"
     ):
         return None
     base = pull.get("base") or {}

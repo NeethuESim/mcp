@@ -604,7 +604,8 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
     assert "MAX_PULL_REQUEST_FILES = 3_000" in FORK_PROMOTION_SCRIPT
     assert "external-contributions/pr-" in FORK_PROMOTION_SCRIPT
     assert "trusted-fork-{username}/pr-" in FORK_PROMOTION_SCRIPT
-    assert 'pull.get("performed_via_github_app")' in FORK_PROMOTION_SCRIPT
+    assert 'user = pull.get("user") or {}' in FORK_PROMOTION_SCRIPT
+    assert 'user.get("type") != "Bot"' in FORK_PROMOTION_SCRIPT
     assert "close_source_pr" not in FORK_PROMOTION_SCRIPT
     assert "reconcile_source_pr" not in FORK_PROMOTION_SCRIPT
     assert "finalize_internal_pr" not in FORK_PROMOTION_SCRIPT
@@ -659,7 +660,7 @@ def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
         in pr_scan_section
     )
     assert "project_source_archive:" not in pr_scan_section
-    assert "blackducksca_prcomment_enabled: false" in pr_scan_section
+    assert "blackducksca_prComment_enabled: false" in pr_scan_section
     assert "github_token:" not in pr_scan_section
     assert "pull-requests: write" not in pr_scan_section
 

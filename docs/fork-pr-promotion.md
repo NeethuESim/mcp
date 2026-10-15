@@ -53,9 +53,10 @@
 - Re-promoting the same SHA reopens a closed-unmerged internal pull request.
   A newer promotion closes older open, unmerged promotions as superseded;
   merged promotions remain closed.
-- A pull request is eligible for superseding only when GitHub attributes it to
-  the configured promotion App through `performed_via_github_app.slug`; a
-  matching branch, SHA, and body marker are not sufficient on their own.
+- A pull request is eligible for superseding only when the Pulls API identifies
+  its author as the configured promotion App's bot through `user.login` and
+  `user.type`; a matching branch, SHA, and body marker are not sufficient on
+  their own.
 
 ## Black Duck scan
 

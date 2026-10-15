@@ -335,7 +335,7 @@ jobs:
 
           # Black Duck SCA scans the inert source directory through its supported
           # project_directory input. It cannot comment on or mutate the pull request.
-          blackducksca_prcomment_enabled: false
+          blackducksca_prComment_enabled: false
 
           ### Mark build status as failure if policy violating issues are found
           mark_build_status: 'failure'

@@ -66,8 +66,8 @@ def internal_pr(
     sha: str = SHA,
     branch: str | None = None,
     state: str = "open",
-    merged: bool = False,
-    app_slug: str | None = APP_SLUG,
+    author_login: str | None = f"{APP_SLUG}[bot]",
+    author_type: str = "Bot",
 ) -> dict:
     branch = branch or f"external-contributions/pr-{source_number}-{sha}"
     marker = (
@@ -77,7 +77,6 @@ def internal_pr(
     pull = {
         "number": number,
         "state": state,
-        "merged": merged,
         "html_url": f"https://github.com/arm/mcp/pull/{number}",
         "body": marker,
         "base": {"ref": "main", "repo": {"full_name": "arm/mcp"}},
@@ -87,8 +86,8 @@ def internal_pr(
             "repo": {"full_name": "arm/mcp"},
         },
     }
-    if app_slug is not None:
-        pull["performed_via_github_app"] = {"slug": app_slug}
+    if author_login is not None:
+        pull["user"] = {"login": author_login, "type": author_type}
     return pull
 
 
@@ -304,12 +303,23 @@ def test_replacement_internal_pr_closes_the_superseded_revision(
     ]
 
 
-@pytest.mark.parametrize("app_slug", [None, "lookalike-app"])
+@pytest.mark.parametrize(
+    ("author_login", "author_type"),
+    [
+        (None, "Bot"),
+        ("lookalike-app[bot]", "Bot"),
+        (f"{APP_SLUG}[bot]", "User"),
+    ],
+)
 def test_lookalike_internal_pr_is_not_closed(
     monkeypatch: pytest.MonkeyPatch,
-    app_slug: str | None,
+    author_login: str | None,
+    author_type: str,
 ) -> None:
-    lookalike = internal_pr(app_slug=app_slug)
+    lookalike = internal_pr(
+        author_login=author_login,
+        author_type=author_type,
+    )
 
     class NoMutationApi:
         def get(self, _path: str) -> None:

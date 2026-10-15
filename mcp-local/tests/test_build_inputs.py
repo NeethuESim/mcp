@@ -77,6 +77,12 @@ REQUIRED_CHECK_DISPATCH = (
 INTEGRATION_WORKFLOW = (
     REPOSITORY / ".github/workflows/integration-tests.yml"
 ).read_text()
+FORK_PROMOTION_WORKFLOW = (
+    REPOSITORY / ".github/workflows/promote-fork-pr.yml"
+).read_text()
+FORK_PROMOTION_SCRIPT = (
+    REPOSITORY / ".github/scripts/promote-fork-pr.py"
+).read_text()
 
 BENCHMARK_WORKFLOW = yaml.safe_load(EMBEDDING_WORKFLOW)
 BENCHMARK_SCRIPT = next(
@@ -502,11 +508,15 @@ def test_release_exports_cyclonedx_sboms_and_attaches_them_to_release() -> None:
 
 
 def test_source_scan_exports_cyclonedx_sbom_for_full_scans_only() -> None:
+    workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    assert workflow["jobs"]["source_scan"]["name"] == (
+        "Main Push and Scheduled full source scan"
+    )
     full_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
         "      - name: Black Duck SCA scan", maxsplit=1
-    )[1].split("      - name: Black Duck SCA PR Scan", maxsplit=1)[0]
+    )[1].split("  pull_request_scan:", maxsplit=1)[0]
     pr_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
-        "      - name: Black Duck SCA PR Scan", maxsplit=1
+        "  pull_request_scan:", maxsplit=1
     )[1]
 
     assert "Export Black Duck CycloneDX SBOM" in full_scan_section
@@ -540,6 +550,197 @@ def test_source_scan_exports_cyclonedx_sbom_for_full_scans_only() -> None:
     assert "steps.black-duck-full-scan.outputs.status == '8'" in full_scan_section
     assert "steps.black-duck-full-scan.outputs.status != '8'" in full_scan_section
     assert "Export Black Duck CycloneDX SBOM" not in pr_scan_section
+
+
+def test_fork_pr_promotion_keeps_credentials_away_from_fork_code() -> None:
+    assert "\n  pull_request_scan:\n    name: Black Duck security scan\n" in (
+        BLACKDUCK_SOURCE_SCAN_WORKFLOW
+    )
+    assert "pull_request_result:" not in BLACKDUCK_SOURCE_SCAN_WORKFLOW
+    blackduck_workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    assert "pull_request_result" not in blackduck_workflow["jobs"]
+    pr_job = blackduck_workflow["jobs"]["pull_request_scan"]
+    assert pr_job["name"] == "Black Duck security scan"
+    assert pr_job["if"] == "${{ github.event_name == 'pull_request' }}"
+    assert pr_job["steps"][0]["name"] == (
+        "Enforce the Black Duck pull request policy"
+    )
+    blackduck_step = next(
+        step for step in pr_job["steps"] if step["name"] == "Black Duck SCA PR Scan"
+    )
+    assert "head.repo.full_name == github.repository" in blackduck_step["if"]
+
+    triggers = FORK_PROMOTION_WORKFLOW.split("permissions:", maxsplit=1)[0]
+    assert "pull_request_target:" in triggers
+    assert "workflow_dispatch:" in triggers
+    assert (
+        "types: [opened, reopened, synchronize, ready_for_review]"
+        in triggers
+    )
+    assert "!github.event.pull_request.draft" in FORK_PROMOTION_WORKFLOW
+    assert "ref: main" in FORK_PROMOTION_WORKFLOW
+    assert "persist-credentials: false" in FORK_PROMOTION_WORKFLOW
+    assert "github.event.pull_request.head.sha || inputs.reviewed_sha" in (
+        FORK_PROMOTION_WORKFLOW
+    )
+    assert "actions/create-github-app-token@" in FORK_PROMOTION_WORKFLOW
+    assert "permission-contents: write" in FORK_PROMOTION_WORKFLOW
+    assert "permission-pull-requests: write" in FORK_PROMOTION_WORKFLOW
+    assert "permission-workflows:" not in FORK_PROMOTION_WORKFLOW
+    assert (
+        "GH_APP_SLUG: ${{ steps.promotion-token.outputs.app-slug }}"
+        in FORK_PROMOTION_WORKFLOW
+    )
+    assert (
+        "github.event.pull_request.merged == true"
+        not in FORK_PROMOTION_WORKFLOW
+    )
+    assert "finalize" not in FORK_PROMOTION_WORKFLOW
+    assert "reconcile" not in FORK_PROMOTION_WORKFLOW
+    assert '--expected-sha "${EXPECTED_SHA}"' in FORK_PROMOTION_WORKFLOW
+    assert "GH_APP_TOKEN" in FORK_PROMOTION_WORKFLOW
+    assert "actions/checkout" not in FORK_PROMOTION_SCRIPT
+    assert 'WORKFLOW_DIRECTORY = ".github/workflows/"' in FORK_PROMOTION_SCRIPT
+    assert "MAX_PULL_REQUEST_FILES = 3_000" in FORK_PROMOTION_SCRIPT
+    assert "external-contributions/pr-" in FORK_PROMOTION_SCRIPT
+    assert "trusted-fork-{username}/pr-" in FORK_PROMOTION_SCRIPT
+    assert 'user = pull.get("user") or {}' in FORK_PROMOTION_SCRIPT
+    assert 'user.get("type") != "Bot"' in FORK_PROMOTION_SCRIPT
+    assert "close_source_pr" not in FORK_PROMOTION_SCRIPT
+    assert "reconcile_source_pr" not in FORK_PROMOTION_SCRIPT
+    assert "finalize_internal_pr" not in FORK_PROMOTION_SCRIPT
+    assert "gh pr merge" not in FORK_PROMOTION_WORKFLOW
+
+    fork_guard = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
+        "      - name: Enforce the Black Duck pull request policy",
+        maxsplit=1,
+    )[1]
+    assert '"${HEAD_REPOSITORY}" != "${GITHUB_REPOSITORY}"' in fork_guard
+    assert "Promote reviewed fork pull request workflow" in fork_guard
+    assert "Do not merge this source pull request" in fork_guard
+    assert "exit 1" in fork_guard
+
+    pin_guard = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
+        "      - name: Verify promoted branch remains pinned to its reviewed commit",
+        maxsplit=1,
+    )[1].split("      - name: Checkout the reviewed pull request head", maxsplit=1)[0]
+    assert "external-contributions/" in pin_guard
+    assert "trusted-fork-" in pin_guard
+    assert 'expected_sha="${PROMOTED_REF##*-}"' in pin_guard
+    assert '"${ACTUAL_SHA,,}" != "${expected_sha,,}"' in pin_guard
+    assert "Promoted branch moved" in pin_guard
+    assert "exit 1" in pin_guard
+
+    pr_scan_section = BLACKDUCK_SOURCE_SCAN_WORKFLOW.split(
+        "  pull_request_scan:", maxsplit=1
+    )[1]
+    assert "if: ${{ github.event_name == 'pull_request' }}" in pr_scan_section
+    assert "HEAD_REPOSITORY:" in pr_scan_section
+    assert pr_scan_section.index("Enforce the Black Duck pull request policy") < (
+        pr_scan_section.index("Checkout the reviewed pull request head")
+    )
+    assert (
+        "github.event.pull_request.head.repo.full_name == github.repository"
+        in pr_scan_section
+    )
+    assert "environment:" not in pr_scan_section
+    assert "persist-credentials: false" in pr_scan_section
+    assert "git archive" not in pr_scan_section
+    assert '"git", "ls-tree", "-rz", "--full-tree"' in pr_scan_section
+    assert '["git", "cat-file", "blob", object_id]' in pr_scan_section
+    assert "every file and symlink stored as a Git blob" in pr_scan_section
+    assert "Materialize executable files and symlink targets as inert regular files" in (
+        pr_scan_section
+    )
+    assert "Unsupported Git blob mode" in pr_scan_section
+    assert "Unsafe Git tree path" in pr_scan_section
+    assert "Reviewed tree produced an empty source directory" in pr_scan_section
+    assert (
+        "project_directory: ${{ runner.temp }}/blackduck-pr-source"
+        in pr_scan_section
+    )
+    assert "project_source_archive:" not in pr_scan_section
+    assert "blackducksca_prComment_enabled: false" in pr_scan_section
+    assert "github_token:" not in pr_scan_section
+    assert "pull-requests: write" not in pr_scan_section
+
+
+def test_blackduck_pr_source_directory_is_inert_and_complete(tmp_path: Path) -> None:
+    repository = tmp_path / "repository"
+    runner_temp = tmp_path / "runner-temp"
+    repository.mkdir()
+    runner_temp.mkdir()
+    (repository / ".gitattributes").write_text(
+        "dependency.lock export-ignore\nsubstituted.txt export-subst\n"
+    )
+    (repository / "dependency.lock").write_text("must be scanned\n")
+    (repository / "substituted.txt").write_text("$Format:%H$\n")
+    (repository / "dependency-link").symlink_to("dependency.lock")
+
+    subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Archive Test",
+            "-c",
+            "user.email=archive-test@example.invalid",
+            "commit",
+            "-qm",
+            "Test archive attributes",
+        ],
+        cwd=repository,
+        check=True,
+    )
+    reviewed_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repository,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+    ).stdout.strip()
+    workflow = yaml.safe_load(BLACKDUCK_SOURCE_SCAN_WORKFLOW)
+    materialize_script = next(
+        step["run"]
+        for step in workflow["jobs"]["pull_request_scan"]["steps"]
+        if step["name"]
+        == (
+            "Materialize inert source directory without executing repository code"
+        )
+    )
+
+    subprocess.run(
+        ["bash", "-c", materialize_script],
+        cwd=repository,
+        check=True,
+        env={
+            **os.environ,
+            "REVIEWED_SHA": reviewed_sha,
+            "RUNNER_TEMP": str(runner_temp),
+        },
+    )
+
+    source_directory = runner_temp / "blackduck-pr-source"
+    assert {
+        path.relative_to(source_directory).as_posix()
+        for path in source_directory.rglob("*")
+        if path.is_file()
+    } == {
+        ".gitattributes",
+        "dependency-link",
+        "dependency.lock",
+        "substituted.txt",
+    }
+    assert (source_directory / "dependency.lock").read_bytes() == (
+        b"must be scanned\n"
+    )
+    assert (source_directory / "substituted.txt").read_bytes() == (
+        b"$Format:%H$\n"
+    )
+    assert not (source_directory / "dependency-link").is_symlink()
+    assert (source_directory / "dependency-link").read_text() == "dependency.lock"
+    assert not ((source_directory / "dependency.lock").stat().st_mode & 0o111)
 
 
 def test_release_manifest_uses_the_validated_architecture_digests() -> None:

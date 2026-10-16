@@ -71,14 +71,5 @@ resource rank (20%) before the candidate cutoff. The returned passage comes from
 the hybrid-selected piece, expanded to its complete original chunk when available.
 Metadata filters apply to both channels and to any refill before ranking.
 
-On a frozen 43,586-vector corpus, warmed sequential measurements in a two-CPU
-Linux container showed mean vector lookup increasing from 0.73 ms (ANN) to
-8.11 ms (exact), while mean full search increased from 274 ms to 277 ms.
-Benchmark top-five hits improved from 332/408 to 337/408 with the same vectors
-and ranking settings. Exact lookup avoids approximate-neighbor misses; relevance
-still depends on the embeddings and hybrid ranking. These measurements did not
-exercise candidate refill or concurrent load; larger-corpus scaling remains
-unmeasured.
-
 See [CONTRIBUTING.md](../CONTRIBUTING.md#versioning-arm-kb-search) for package
 versioning guidance.

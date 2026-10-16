@@ -44,9 +44,35 @@ class SearchResources:
     include_disclaimers: bool = True
     utm_source: str | None = None
     _filter_index: MetadataFilterIndex = field(init=False, repr=False, compare=False)
+    _parent_texts: dict[tuple[str, str], str] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self._filter_index = MetadataFilterIndex(self.metadata)
+        parents: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for row in self.metadata:
+            if row.get("parent_uuid") and row.get("parent_chunk_uuid"):
+                key = (row["parent_uuid"], row["parent_chunk_uuid"])
+                parents.setdefault(key, []).append(row)
+        self._parent_texts = {}
+        for key, pieces in parents.items():
+            pieces.sort(key=lambda piece: piece["source_start"])
+            expected_starts = [0] + [piece["source_end"] for piece in pieces[:-1]]
+            complete = all(
+                piece["source_part"] == number
+                and piece["source_parts"] == len(pieces)
+                and piece["source_start"] == expected_starts[number - 1]
+                and piece["source_end"] == piece["source_start"] + len(piece["original_text"])
+                for number, piece in enumerate(pieces, 1)
+            )
+            if complete:
+                self._parent_texts[key] = "".join(piece["original_text"] for piece in pieces)
+
+    def snippet_for(self, metadata: dict[str, Any]) -> str:
+        """Expand a ranked piece to its complete original chunk when available."""
+        return self._parent_texts.get(
+            (metadata.get("parent_uuid"), metadata.get("parent_chunk_uuid")),
+            metadata.get("original_text", metadata.get("content", "")),
+        )
 
 
 def sentence_transformer_cache_folder() -> str | None:
@@ -165,7 +191,7 @@ def search(
     formatted = [
         {
             "url": item["metadata"].get("url") or item["metadata"].get("resolved_url"),
-            "snippet": item["metadata"].get("original_text", item["metadata"].get("content", "")),
+            "snippet": resources.snippet_for(item["metadata"]),
             "title": item["metadata"].get("title", ""),
             "heading": item["metadata"].get("heading", ""),
             "doc_type": item["metadata"].get("doc_type", ""),

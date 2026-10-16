@@ -90,7 +90,6 @@ def load_local_yaml_files() -> list[dict]:
     return yaml_contents
 
 
-# Ported from experiments/prepare_corpus.py and minilm-500-no-overlap/run.py.
 EMBEDDING_TOKEN_CAP = 500
 PIECE_NAMESPACE = uuid.UUID("4729167e-eac3-5d52-af2b-f7f366cffb29")
 

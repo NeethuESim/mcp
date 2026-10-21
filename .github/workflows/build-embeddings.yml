@@ -593,6 +593,34 @@ jobs:
           release_version="$(jq -er '.version' mcp-local/server.json)"
           echo "release_version=${release_version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.update.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          if release_notes="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f "tag_name=v${RELEASE_VERSION}" \
+            -f "target_commitish=${GITHUB_SHA}" \
+            --jq '.body // empty' |
+            sed '/^\*\*Full Changelog\*\*:/d')"; then
+            if [[ ! "${release_notes}" =~ [^[:space:]] ]]; then
+              release_notes=""
+              echo "::warning::Generated release notes are empty; the promotion PR will still be created."
+            fi
+          else
+            release_notes=""
+            echo "::warning::Could not generate release notes; the promotion PR will still be created."
+          fi
+
+          delimiter="release_notes_$(uuidgen)"
+          {
+            printf 'RELEASE_NOTES<<%s\n' "${delimiter}"
+            printf '%s\n' "${release_notes}"
+            printf '%s\n' "${delimiter}"
+          } >> "${GITHUB_ENV}"
+
       - name: Propose embedding pin for review
         env:
           GH_TOKEN: ${{ github.token }}
@@ -608,6 +636,8 @@ jobs:
             - Proposed MCP version: `${{ steps.update.outputs.release_version }}`
 
             This PR updates the checked-in source CSV, build-input manifest, Dockerfile default, and MCP release version. The CSV comes from the same immutable chunk snapshot used to build these embeddings. Merging the reviewed PR releases an MCP image using this exact digest.
+
+            ${{ env.RELEASE_NOTES }}
           SUMMARY_TITLE: MCP embedding promotion
           CANDIDATE: ${{ env.EMBEDDINGS_REFERENCE }}
           SUMMARY_DETAILS: |

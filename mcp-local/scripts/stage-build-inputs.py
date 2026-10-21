@@ -219,8 +219,9 @@ Suites: noble noble-updates noble-backports noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
-apt-get update
+apt-get -o Acquire::Retries=5 update
 apt-get install --yes --download-only --reinstall --no-install-recommends \
+    -o Acquire::Retries=5 \
     -o Dir::Cache::archives=/bundle \
     ${APT_PACKAGES}
 rm -rf /bundle/lock /bundle/partial

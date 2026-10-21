@@ -25,8 +25,6 @@ import yaml
 from sentence_transformers import SentenceTransformer
 from usearch.index import Index
 
-INTRINSIC_DETAIL_WEIGHT = 0.75
-
 
 def load_local_yaml_files() -> list[dict]:
     """Load locally stored YAML files and return their contents as a list of dictionaries."""
@@ -125,16 +123,10 @@ def choose_end(text: str, start: int, tokenizer) -> int:
 
 
 def embedding_input(row: dict) -> str:
-    """Use compact intrinsic cards while preserving complete response text."""
+    """Use prepared intrinsic descriptions while preserving complete response text."""
     if row.get("doc_type") == "Intrinsic":
-        return row["embedding_texts"]["compact"]
+        return row["embedding_text"]
     return row["original_text"]
-
-
-def blend_intrinsic_embeddings(compact: np.ndarray, detailed: np.ndarray) -> np.ndarray:
-    """Combine two normalized representations into one stored unit vector."""
-    blended = (1 - INTRINSIC_DETAIL_WEIGHT) * compact + INTRINSIC_DETAIL_WEIGHT * detailed
-    return blended / np.linalg.norm(blended, axis=-1, keepdims=True)
 
 
 def split_embedding_inputs(metadata: list[dict], tokenizer) -> list[dict]:
@@ -172,7 +164,7 @@ def split_embedding_inputs(metadata: list[dict], tokenizer) -> list[dict]:
 def create_embeddings(
     metadata: list[dict], model_path: str, device: str = "cpu",
 ) -> tuple[np.ndarray, list[dict]]:
-    """Build one vector per record, blending both source views for intrinsics."""
+    """Build one vector per record from its prepared embedding input."""
     torch.manual_seed(0)
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
@@ -184,19 +176,14 @@ def create_embeddings(
     embeddings = np.empty((len(metadata), 384), dtype=np.float32)
     for start in range(0, len(metadata), 32):
         batch = metadata[start:start + 32]
-        intrinsic_ids = [i for i, row in enumerate(batch) if row.get("doc_type") == "Intrinsic"]
         texts = [embedding_input(row) for row in batch]
-        texts.extend(batch[i]["embedding_texts"]["detailed"] for i in intrinsic_ids)
         if any(token_count(model.tokenizer, text) > EMBEDDING_TOKEN_CAP for text in texts):
             raise ValueError("Embedding input exceeds 500 tokens including special tokens")
         encoded = model.encode(
             texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True,
             precision="float32", normalize_embeddings=True,
         )
-        vectors = encoded[:len(batch)]
-        if intrinsic_ids:
-            vectors[intrinsic_ids] = blend_intrinsic_embeddings(vectors[intrinsic_ids], encoded[len(batch):])
-        embeddings[start:start + len(batch)] = vectors
+        embeddings[start:start + len(batch)] = encoded
         print(f"Embedded {start + len(batch)}/{len(metadata)} pieces", flush=True)
     return embeddings, metadata
 
@@ -262,9 +249,8 @@ def main():
             print(f"Processing YAML content {i}/{len(yaml_contents)}")
         if (yaml_content.get("doc_type") == "Intrinsic"
                 or "/instruction-sets/intrinsics/#q=" in str(yaml_content.get("url") or "")):
-            views = yaml_content.get("embedding_texts")
-            if (not isinstance(views, dict) or set(views) != {"compact", "detailed"}
-                    or not all(isinstance(text, str) and text.strip() for text in views.values())
+            text = yaml_content.get("embedding_text")
+            if (not isinstance(text, str) or not text.strip()
                     or yaml_content.get("doc_type") != "Intrinsic"
                     or not yaml_content.get("heading") or not yaml_content.get("product")):
                 raise ValueError(
@@ -307,14 +293,14 @@ def main():
             }
         )
 
-        if "embedding_texts" in yaml_content:
-            metadata[-1]["embedding_texts"] = yaml_content["embedding_texts"]
+        if "embedding_text" in yaml_content:
+            metadata[-1]["embedding_text"] = yaml_content["embedding_text"]
 
     # Create embeddings
     embeddings, metadata = create_embeddings(metadata, args.model_path, args.device)
 
     for row in metadata:
-        row.pop("embedding_texts", None)
+        row.pop("embedding_text", None)
 
     print("Saving embeddings to file")
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

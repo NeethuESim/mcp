@@ -115,8 +115,8 @@ def intrinsic_type_description(raw: str) -> str:
     return description
 
 
-def intrinsic_embedding_text(record: dict, *, detailed: bool = True) -> str:
-    """Format compact or detailed source text; preserve full text for responses."""
+def intrinsic_embedding_text(record: dict) -> str:
+    """Format detailed source text; preserve full text for responses."""
     text, name = record["original_text"], record["heading"]
     isa_match = re.search(r"is part of the (\S+) instruction set", text)
     isa = isa_match.group(1) if isa_match else record["product"]
@@ -128,9 +128,6 @@ def intrinsic_embedding_text(record: dict, *, detailed: bool = True) -> str:
                   if term.strip() and term.strip().lower() not in _GENERIC_KEYWORDS | {name.lower(), isa.lower()}]
     description_match = re.search(r"description: (.*?)\n\n", text, re.S)
     description = description_match.group(1) if description_match else ""
-    if not detailed:
-        return (f"{record['product']} intrinsic {name}. {description} "
-                f"Operation: {', '.join(categories)}. Signature: {signature}")
     description = description.strip()
     declaration = re.fullmatch(r"\s*(.+?)\s+" + re.escape(name) + r"\s*\((.*?)\)\s*;\s*", signature, re.S)
     if not declaration:
@@ -168,15 +165,13 @@ def intrinsic_embedding_text(record: dict, *, detailed: bool = True) -> str:
 
 
 def prepare_intrinsic_chunk(chunk: dict) -> dict:
-    """Prepare clean metadata and both embedding descriptions during acquisition."""
+    """Prepare clean metadata and the embedding description during acquisition."""
     if not is_intrinsic_chunk(chunk):
         return chunk
     normalized = normalize_intrinsic_chunk(chunk)
+    normalized.pop("embedding_texts", None)
     record = {**normalized, "original_text": normalized["content"]}
-    return {**normalized, "embedding_texts": {
-        "compact": intrinsic_embedding_text(record, detailed=False),
-        "detailed": intrinsic_embedding_text(record),
-    }}
+    return {**normalized, "embedding_text": intrinsic_embedding_text(record)}
 
 
 @dataclass

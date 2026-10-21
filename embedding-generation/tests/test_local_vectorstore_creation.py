@@ -223,22 +223,15 @@ def test_intrinsics_embed_one_source_card_without_splitting_full_text(tokenizer,
             + "Full pseudocode and compiler advice. " * 200)
     row = {**record(text), "doc_type": "Intrinsic", "heading": "vaddq_u8",
            "product": "Neon", "keywords": "vaddq_u8, neon, addition"}
-    row["embedding_texts"] = {
-        "compact": intrinsic_source.intrinsic_embedding_text(row, detailed=False),
-        "detailed": intrinsic_source.intrinsic_embedding_text(row),
-    }
+    row["embedding_text"] = intrinsic_source.intrinsic_embedding_text(row)
     assert vectorstore.token_count(tokenizer, text) > 500
     assert vectorstore.split_embedding_inputs([row], tokenizer) == [row]
     # Use the real model: this checks which input was encoded, beyond a mock call.
     monkeypatch.setattr(torch, "set_num_interop_threads", lambda _: None)
     vectors, metadata = vectorstore.create_embeddings([row], tokenizer.name_or_path)
     model = resources.load_embedding_model(tokenizer.name_or_path, allow_download=False).to("cpu").float().eval()
-    views = model.encode(
-        [vectorstore.embedding_input(row), intrinsic_source.intrinsic_embedding_text(row)], normalize_embeddings=True,
-    )
-    expected = .25 * views[0] + .75 * views[1]
-    expected /= np.linalg.norm(expected)
-    np.testing.assert_allclose(vectors, expected[None, :], atol=1e-6)
+    expected = model.encode([row["embedding_text"]], normalize_embeddings=True)
+    np.testing.assert_allclose(vectors, expected, atol=1e-6)
     assert metadata == [row]
     assert "compiler advice" not in vectorstore.embedding_input(row)
 
@@ -257,11 +250,11 @@ def test_intrinsic_source_type_descriptions(ctype, description):
     assert intrinsic_source.intrinsic_type_description(ctype) == description
 
 
-def test_blending_keeps_one_vector_per_record_and_preserves_other_documents(tokenizer, monkeypatch):
+def test_prepared_inputs_keep_one_vector_per_record_and_preserve_other_documents(tokenizer, monkeypatch):
     intrinsic = intrinsic_source.prepare_intrinsic_chunk(chunk())
     intrinsic = {**intrinsic, "original_text": intrinsic["content"]}
     rows = [record("First guide"), intrinsic, record("Second guide"), intrinsic]
-    encoded = np.eye(384, dtype=np.float32)[[2, 0, 3, 1, 1, 0]]
+    encoded = np.eye(384, dtype=np.float32)[[2, 0, 3, 1]]
     model = Mock(tokenizer=tokenizer)
     model.float.return_value = model.eval.return_value = model
     model.encode.return_value = encoded.copy()
@@ -269,10 +262,10 @@ def test_blending_keeps_one_vector_per_record_and_preserves_other_documents(toke
     monkeypatch.setattr(torch, "set_num_interop_threads", lambda _: None)
     vectors, metadata = vectorstore.create_embeddings(rows, "unused")
     assert vectors.shape == (4, 384) and metadata == rows
-    np.testing.assert_array_equal(vectors[[0, 2]], encoded[[0, 2]])
-    np.testing.assert_allclose(vectors[1, :2], np.array([1, 3]) / np.sqrt(10), atol=1e-7)
-    np.testing.assert_allclose(vectors[3, :2], np.array([3, 1]) / np.sqrt(10), atol=1e-7)
-    np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-7)
+    np.testing.assert_array_equal(vectors, encoded)
+    assert model.encode.call_args.args[0] == [
+        "First guide", intrinsic["embedding_text"], "Second guide", intrinsic["embedding_text"],
+    ]
 
 
 def chunk(isa="Neon"):
@@ -318,12 +311,15 @@ def test_nonintrinsic_chunk_is_unchanged():
     assert intrinsic_source.normalize_intrinsic_chunk(raw) is raw
 
 
-def test_prepared_chunks_roundtrip_without_reparsing(tmp_path, monkeypatch, gc):
+@pytest.mark.parametrize("legacy_views", [False, True])
+def test_prepared_chunks_roundtrip_without_reparsing(tmp_path, monkeypatch, gc, legacy_views):
     source = tmp_path / "intrinsics"
     source.mkdir()
     monkeypatch.setenv("INTRINSIC_CHUNKS_DIR", str(source))
     monkeypatch.setenv("YAML_DATA_DIR", str(tmp_path / "guides"))
     raw = {**chunk(), "uuid": "a", "title": "Arm Intrinsics - vaddq_u8"}
+    if legacy_views:
+        raw["embedding_texts"] = {"compact": "stale compact text", "detailed": "stale detailed text"}
     path = source / "chunk_a.yaml"
     path.write_text(yaml.safe_dump(raw))
     monkeypatch.chdir(tmp_path)
@@ -331,7 +327,7 @@ def test_prepared_chunks_roundtrip_without_reparsing(tmp_path, monkeypatch, gc):
     inputs = []
 
     def encode(metadata, *args):
-        inputs.append([r["embedding_texts"] for r in metadata])
+        inputs.append([r["embedding_text"] for r in metadata])
         return np.ones((len(metadata), 384), dtype=np.float32), metadata
 
     monkeypatch.setattr(vectorstore, "create_embeddings", encode)
@@ -345,28 +341,42 @@ def test_prepared_chunks_roundtrip_without_reparsing(tmp_path, monkeypatch, gc):
     assert path.read_text() == prepared
     record = yaml.safe_load(prepared)
     assert record["keywords"] == "vaddq_u8, neon, addition"
-    assert set(record["embedding_texts"]) == {"compact", "detailed"}
-    assert "16 lanes of 8-bit unsigned integer" in record["embedding_texts"]["detailed"]
+    assert isinstance(record.get("embedding_text"), str)
+    assert "16 lanes of 8-bit unsigned integer" in record["embedding_text"]
+    assert "embedding_texts" not in record
 
     def unexpected_parse(*args):
         raise AssertionError("Prepared chunks must not be parsed again")
 
     monkeypatch.setattr(intrinsic_source, "normalize_intrinsic_chunk", unexpected_parse)
     vectorstore.main()
-    assert inputs == [[record["embedding_texts"]]]
+    assert inputs == [[record["embedding_text"]]]
     saved = json.loads((tmp_path / "metadata.json").read_text())[0]
     assert saved["original_text"] == record["content"]
     assert saved["doc_type"] == "Intrinsic"
-    assert "embedding_texts" not in saved
+    assert "embedding_text" not in saved
 
 
-@pytest.mark.parametrize("views", [None, {}, {"compact": "x", "detailed": ""},
-                                    {"compact": "x", "detailed": 3}])
-def test_invalid_prepared_descriptions_are_rejected(views, monkeypatch):
+@pytest.mark.parametrize("text", [None, "", " \t\n", 3, {"compact": "x", "detailed": "y"}])
+def test_invalid_prepared_descriptions_are_rejected(text, monkeypatch):
     record = intrinsic_source.prepare_intrinsic_chunk(chunk())
-    record["embedding_texts"] = views
+    record.pop("embedding_texts", None)
+    record["embedding_text"] = text
     monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
     monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: [record])
+    with pytest.raises(ValueError, match="Regenerate.*acquisition"):
+        vectorstore.main()
+
+
+def test_old_two_description_chunks_require_reacquisition(monkeypatch):
+    record = {**intrinsic_source.prepare_intrinsic_chunk(chunk()), "uuid": "a", "title": "Intrinsic", "chunk_uuid": "a"}
+    record.pop("embedding_text", None)
+    record["embedding_texts"] = {"compact": "old compact text", "detailed": "old detailed text"}
+    monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
+    monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: [record])
+    def unexpected_encode(*args):
+        pytest.fail("Old acquisition chunks must be rejected before encoding")
+    monkeypatch.setattr(vectorstore, "create_embeddings", unexpected_encode)
     with pytest.raises(ValueError, match="Regenerate.*acquisition"):
         vectorstore.main()
 

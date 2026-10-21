@@ -267,18 +267,20 @@ are normalized to `doc_type: Intrinsic`, with the ISA in `product` and the
 intrinsic name in `heading`. Shared x86 keywords are removed and Neon header
 references are corrected to `arm_neon.h`.
 
-Acquisition prepares two `embedding_texts` fields in each intrinsic YAML chunk:
-`compact` contains the name, description, operation keywords and signature;
-`detailed` also describes return and argument types, lane widths and source facts.
-The embedding builder requires these nonempty strings and prepared metadata.
+Acquisition prepares one `embedding_text` string in each intrinsic YAML chunk.
+It contains the name, description, operation keywords and signature, plus
+descriptions of return and argument types, lane widths and source facts.
+The embedding builder requires this nonempty string and prepared metadata.
 Missing or malformed fields fail with instructions to regenerate the chunk
 artifact. Deploy the updated acquisition stage and regenerate its chunk snapshot
-before using the stricter builder; there is no legacy-chunk preparation fallback.
+before using the stricter builder. This also applies to older chunks containing
+the two-description `embedding_texts` field; there is no preparation fallback
+in the builder.
 
-Both descriptions are encoded and blended into one normalized vector using
-25% compact and 75% detailed. The intermediate descriptions are excluded from
+The description is encoded once into one normalized vector, without blending.
+The intermediate description is excluded from
 saved search metadata. Full source text remains in `original_text` for returned
 passages, including pseudocode; only the Neon header correction changes that text.
-Intrinsic records stay whole. Both embedding descriptions must fit the 500-token
+Intrinsic records stay whole. Each embedding description must fit the 500-token
 cap; overflow fails instead of truncating. Other documents retain lossless
 500-token splitting. Rebuild and distribute metadata and vectors together.

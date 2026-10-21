@@ -262,25 +262,12 @@ URLs rather than selecting an authoritative record.
 
 ## Intrinsic embedding records
 
-During acquisition, catalog URLs containing `/instruction-sets/intrinsics/#q=`
-are normalized to `doc_type: Intrinsic`, with the ISA in `product` and the
-intrinsic name in `heading`. Shared x86 keywords are removed and Neon header
-references are corrected to `arm_neon.h`.
+Acquisition prepares clean intrinsic metadata and one `embedding_text` containing
+the operation, signature, and type descriptions. The builder embeds it once in
+the shared index, preserves the full source for responses, and excludes
+`embedding_text` from saved metadata.
 
-Acquisition prepares one `embedding_text` string in each intrinsic YAML chunk.
-It contains the name, description, operation keywords and signature, plus
-descriptions of return and argument types, lane widths and source facts.
-The embedding builder requires this nonempty string and prepared metadata.
-Missing or malformed fields fail with instructions to regenerate the chunk
-artifact. Deploy the updated acquisition stage and regenerate its chunk snapshot
-before using the stricter builder. This also applies to older chunks containing
-the two-description `embedding_texts` field; there is no preparation fallback
-in the builder.
-
-The description is encoded once into one normalized vector, without blending.
-The intermediate description is excluded from
-saved search metadata. Full source text remains in `original_text` for returned
-passages, including pseudocode; only the Neon header correction changes that text.
-Intrinsic records stay whole. Each embedding description must fit the 500-token
-cap; overflow fails instead of truncating. Other documents retain lossless
-500-token splitting. Rebuild and distribute metadata and vectors together.
+Rebuild and pin the updated toolchain, then regenerate chunks before rebuilding
+the vector store. Intrinsic chunks require prepared metadata and `embedding_text`;
+missing preparation or descriptions over 500 tokens fail the build. Publish the
+model, metadata, and index together.

@@ -71,33 +71,8 @@ resource rank (20%) before the candidate cutoff. The returned passage comes from
 the hybrid-selected piece, expanded to its complete original chunk when available.
 Metadata filters apply to both channels and to any refill before ranking.
 
+Intrinsic retrieval matches catalog and expanded function names, and uses the
+requested ISA and signature types to improve ranking.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md#versioning-arm-kb-search) for package
 versioning guidance.
-
-## Reference records
-
-Support and availability questions favor an Ecosystem Dashboard record when its
-complete package name is present and its Linux/Windows scope agrees with the
-query. Package identity comes from `heading_path`, including for body subsections;
-legacy records without a path use `heading`. Instructional questions such as
-"How can I use ..." and tuning requests do not receive the support preference
-by themselves. "Can I ..." requires an availability or execution verb.
-
-Typed intrinsic records receive an exact-name preference (including catalog
-names with optional ACLE brackets). Otherwise, intrinsic intent, the requested
-ISA, and signature types determine their preference. An SME query does not
-prefer SVE records. Exact snake_case API identifiers in passages receive extra
-weight; generic architecture names and type names are excluded. These terms
-adjust the existing hybrid score before the existing resource-rank fusion.
-
-The intrinsic preference requires the rebuilt `doc_type=Intrinsic` metadata.
-Older bundles remain readable but do not receive that typed-record preference.
-
-Every typed intrinsic name is indexed in a separate sparse name field, including
-names already present in prose, names without underscores (`svcntb`), and names
-with leading underscores (`__crc32b`). Literal catalog spellings such as
-`svqrdmulh[_s32]` and expanded spellings such as `svqrdmulh_s32` share name
-evidence, including with trailing sentence periods. Prose tokens and corpus
-statistics stay unchanged. The name field uses positive inverse-document-frequency
-weights without length normalization so exact names also work in small snapshots.
-Metadata filters constrain name matches exactly as they constrain prose matches.

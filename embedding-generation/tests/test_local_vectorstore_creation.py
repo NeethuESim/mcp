@@ -237,6 +237,10 @@ def test_intrinsics_embed_one_source_card_without_splitting_full_text(tokenizer,
 
 
 @pytest.mark.parametrize("ctype,description", [
+    ("int", "signed integer scalar"),
+    ("const int", "signed integer scalar"),
+    ("enum svpattern", "predicate pattern selecting active elements"),
+    ("enum svprfop", "prefetch operation selecting access type, cache level and retention policy"),
     ("void", "no return value"),
     ("void *", "pointer to writable untyped memory"),
     ("const void *", "pointer to read-only untyped memory"),
@@ -244,6 +248,11 @@ def test_intrinsics_embed_one_source_card_without_splitting_full_text(tokenizer,
     ("const uint8_t *", "pointer to read-only 8-bit unsigned integer scalar"),
     ("float32x4x3_t", "tuple of 3 vectors, each with 4 lanes of 32-bit floating point, 128-bit vector"),
     ("svuint32_t", "scalable vector of 32-bit unsigned integer elements"),
+    ("svfloat32x2_t", "tuple of 2 vectors, each a scalable vector of 32-bit floating point elements"),
+    ("svuint16x3_t", "tuple of 3 vectors, each a scalable vector of 16-bit unsigned integer elements"),
+    ("svbfloat16x4_t", "tuple of 4 vectors, each a scalable vector of 16-bit brain floating point elements"),
+    ("uint8_t **", "uint8_t **"),
+    ("const uint8_t *const *", "const uint8_t *const *"),
     ("svbool_t", "scalable predicate mask"),
 ])
 def test_intrinsic_source_type_descriptions(ctype, description):
@@ -304,6 +313,18 @@ def test_card_preserves_operation_and_signature_but_omits_shared_template():
         "Signature: uint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b);"
     )
     assert "full pseudocode" in record["original_text"]
+
+
+def test_card_preserves_unexpanded_types_and_full_signature():
+    signature = "svcount_t example(enum future_pattern pattern, const int lane, mfloat8_t value);"
+    record = {"heading": "example", "product": "SVE", "keywords": "",
+              "original_text": "The signature is as follows:\n`" + signature + "`\n"}
+    text = intrinsic_source.intrinsic_embedding_text(record)
+    assert "Returns: svcount_t." in text
+    assert "Input pattern: enum future_pattern." in text
+    assert "Input lane: signed integer scalar." in text
+    assert "Input value: mfloat8_t." in text
+    assert text.endswith("Signature: " + signature)
 
 
 def test_nonintrinsic_chunk_is_unchanged():

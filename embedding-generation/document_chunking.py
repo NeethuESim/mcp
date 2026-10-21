@@ -89,12 +89,18 @@ def normalize_intrinsic_chunk(chunk: dict) -> dict:
 
 def intrinsic_type_description(raw: str) -> str:
     """Describe C scalar, vector, tuple and pointer types at ingestion time."""
+    # Keep unsupported pointer nesting intact rather than flattening it.
+    if raw.count("*") > 1:
+        return raw.strip()
     base = re.sub(r"\b(?:const|volatile|restrict|__restrict)\b", "", raw).replace("*", "").strip()
     labels = {"uint": "unsigned integer", "int": "signed integer", "float": "floating point",
               "poly": "polynomial", "bfloat": "brain floating point"}
     fixed = re.fullmatch(r"(u?int|float|poly|bfloat)(\d+)((?:x\d+)*)_t", base)
     scalable = re.fullmatch(r"sv(u?int|float|bfloat)(\d+)(?:x(\d+))?_t", base)
     description = {"svbool_t": "scalable predicate mask", "bool": "boolean scalar",
+                   "int": "signed integer scalar",
+                   "enum svpattern": "predicate pattern selecting active elements",
+                   "enum svprfop": "prefetch operation selecting access type, cache level and retention policy",
                    "void": "untyped memory" if "*" in raw else "no return value"}.get(base, base)
     if fixed:
         kind, width, dimensions = fixed.groups()
@@ -108,7 +114,7 @@ def intrinsic_type_description(raw: str) -> str:
         kind, width, count = scalable.groups()
         description = f"scalable vector of {width}-bit {labels[kind]} elements"
         if count:
-            description = f"tuple of {count} {description}s"
+            description = f"tuple of {count} vectors, each a {description}"
     if "*" in raw:
         qualifier = "read-only" if re.search(r"\bconst\b", raw.split("*")[0]) else "writable"
         description = f"pointer to {qualifier} " + description

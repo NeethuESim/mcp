@@ -164,7 +164,7 @@ def split_embedding_inputs(metadata: list[dict], tokenizer) -> list[dict]:
 def create_embeddings(
     metadata: list[dict], model_path: str, device: str = "cpu",
 ) -> tuple[np.ndarray, list[dict]]:
-    """Build one vector per record from its prepared embedding input."""
+    """Build embeddings from intrinsic descriptions or original document text."""
     torch.manual_seed(0)
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)

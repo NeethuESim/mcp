@@ -1238,7 +1238,7 @@ def test_toolchain_input_changes_rebuild_and_propose_pin() -> None:
 def test_embedding_toolchain_uses_fixed_python_version() -> None:
     assert (
         "ARG PYTHON_IMAGE=docker.io/library/python:3.13.16-slim@sha256:"
-        "af7e5047e10ef70882ab774f03310df7151118fe77b8e63bac5e0766c4f5cc8c"
+        "ff089de2ebe52f328c4834221097e20eae7f7e4148ea06ac42bd8440d3c79094"
         in TOOLCHAIN_DOCKERFILE
     )
     assert "assert sys.version_info[:3] == (3, 13, 16)" in TOOLCHAIN_DOCKERFILE

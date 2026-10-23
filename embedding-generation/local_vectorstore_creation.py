@@ -122,12 +122,19 @@ def choose_end(text: str, start: int, tokenizer) -> int:
     return end
 
 
+def embedding_input(row: dict) -> str:
+    """Use prepared intrinsic descriptions while preserving complete response text."""
+    if row.get("doc_type") == "Intrinsic":
+        return row["embedding_text"]
+    return row["original_text"]
+
+
 def split_embedding_inputs(metadata: list[dict], tokenizer) -> list[dict]:
     """Return lossless consecutive pieces; leave fitting records unchanged."""
     output = []
     for row in metadata:
         text = row["original_text"]
-        if token_count(tokenizer, text) <= EMBEDDING_TOKEN_CAP:
+        if row.get("doc_type") == "Intrinsic" or token_count(tokenizer, text) <= EMBEDDING_TOKEN_CAP:
             output.append(row)
             continue
         if not row["search_text"].endswith(text):
@@ -157,7 +164,7 @@ def split_embedding_inputs(metadata: list[dict], tokenizer) -> list[dict]:
 def create_embeddings(
     metadata: list[dict], model_path: str, device: str = "cpu",
 ) -> tuple[np.ndarray, list[dict]]:
-    """Build fresh capped vectors in metadata order, one encode call per 32 inputs."""
+    """Build embeddings from intrinsic descriptions or original document text."""
     torch.manual_seed(0)
     torch.set_num_threads(2)
     torch.set_num_interop_threads(1)
@@ -168,14 +175,16 @@ def create_embeddings(
     metadata = split_embedding_inputs(metadata, model.tokenizer)
     embeddings = np.empty((len(metadata), 384), dtype=np.float32)
     for start in range(0, len(metadata), 32):
-        texts = [row["original_text"] for row in metadata[start:start + 32]]
+        batch = metadata[start:start + 32]
+        texts = [embedding_input(row) for row in batch]
         if any(token_count(model.tokenizer, text) > EMBEDDING_TOKEN_CAP for text in texts):
             raise ValueError("Embedding input exceeds 500 tokens including special tokens")
-        embeddings[start:start + len(texts)] = model.encode(
+        encoded = model.encode(
             texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True,
             precision="float32", normalize_embeddings=True,
         )
-        print(f"Embedded {start + len(texts)}/{len(metadata)} pieces", flush=True)
+        embeddings[start:start + len(batch)] = encoded
+        print(f"Embedded {start + len(batch)}/{len(metadata)} pieces", flush=True)
     return embeddings, metadata
 
 
@@ -238,6 +247,16 @@ def main():
     for i, yaml_content in enumerate(yaml_contents, 1):
         if i <= 10 or i % 1000 == 0 or i == len(yaml_contents):
             print(f"Processing YAML content {i}/{len(yaml_contents)}")
+        if (yaml_content.get("doc_type") == "Intrinsic"
+                or "/instruction-sets/intrinsics/#q=" in str(yaml_content.get("url") or "")):
+            text = yaml_content.get("embedding_text")
+            if (not isinstance(text, str) or not text.strip()
+                    or yaml_content.get("doc_type") != "Intrinsic"
+                    or not yaml_content.get("heading") or not yaml_content.get("product")):
+                raise ValueError(
+                    f"Missing or invalid prepared intrinsic: {yaml_content.get('url')}. "
+                    "Regenerate the chunk artifact with the updated acquisition stage."
+                )
         heading_path = yaml_content.get("heading_path", []) or []
         search_text = " ".join(
             str(value)
@@ -274,8 +293,14 @@ def main():
             }
         )
 
+        if "embedding_text" in yaml_content:
+            metadata[-1]["embedding_text"] = yaml_content["embedding_text"]
+
     # Create embeddings
     embeddings, metadata = create_embeddings(metadata, args.model_path, args.device)
+
+    for row in metadata:
+        row.pop("embedding_text", None)
 
     print("Saving embeddings to file")
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")

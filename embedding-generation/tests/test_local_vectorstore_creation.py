@@ -15,6 +15,7 @@
 import json
 import os
 import sys
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
@@ -22,9 +23,11 @@ from unittest.mock import Mock, call
 import numpy as np
 import pytest
 import torch
+import yaml
 from arm_kb_search import resources
 from transformers import AutoTokenizer
 
+import document_chunking as intrinsic_source
 import local_vectorstore_creation as vectorstore
 from local_vectorstore_creation import load_local_yaml_files
 
@@ -212,3 +215,198 @@ def test_real_query_window_and_builtin_normalization(tokenizer):
     assert type(model[-1]).__name__ == "Normalize"
     vectors = model.encode(["Arm intrinsics", "hello " * 510], convert_to_numpy=True)
     np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-6)
+
+
+def test_intrinsics_embed_one_source_card_without_splitting_full_text(tokenizer, monkeypatch):
+    text = ("Intrinsic description: Add unsigned bytes.\n\n"
+            "Signature follows:\n`uint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b);`\n"
+            + "Full pseudocode and compiler advice. " * 200)
+    row = {**record(text), "doc_type": "Intrinsic", "heading": "vaddq_u8",
+           "product": "Neon", "keywords": "vaddq_u8, neon, addition"}
+    row["embedding_text"] = intrinsic_source.intrinsic_embedding_text(row)
+    assert vectorstore.token_count(tokenizer, text) > 500
+    assert vectorstore.split_embedding_inputs([row], tokenizer) == [row]
+    # Use the real model: this checks which input was encoded, beyond a mock call.
+    monkeypatch.setattr(torch, "set_num_interop_threads", lambda _: None)
+    vectors, metadata = vectorstore.create_embeddings([row], tokenizer.name_or_path)
+    model = resources.load_embedding_model(tokenizer.name_or_path, allow_download=False).to("cpu").float().eval()
+    expected = model.encode([row["embedding_text"]], normalize_embeddings=True)
+    np.testing.assert_allclose(vectors, expected, atol=1e-6)
+    assert metadata == [row]
+    assert "compiler advice" not in vectorstore.embedding_input(row)
+
+
+@pytest.mark.parametrize("ctype,description", [
+    ("int", "signed integer scalar"),
+    ("const int", "signed integer scalar"),
+    ("enum svpattern", "predicate pattern selecting active elements"),
+    ("enum svprfop", "prefetch operation selecting access type, cache level and retention policy"),
+    ("void", "no return value"),
+    ("void *", "pointer to writable untyped memory"),
+    ("const void *", "pointer to read-only untyped memory"),
+    ("void *const", "pointer to writable untyped memory"),
+    ("const uint8_t *", "pointer to read-only 8-bit unsigned integer scalar"),
+    ("float32x4x3_t", "tuple of 3 vectors, each with 4 lanes of 32-bit floating point, 128-bit vector"),
+    ("svuint32_t", "scalable vector of 32-bit unsigned integer elements"),
+    ("svfloat32x2_t", "tuple of 2 vectors, each a scalable vector of 32-bit floating point elements"),
+    ("svuint16x3_t", "tuple of 3 vectors, each a scalable vector of 16-bit unsigned integer elements"),
+    ("svbfloat16x4_t", "tuple of 4 vectors, each a scalable vector of 16-bit brain floating point elements"),
+    ("uint8_t **", "uint8_t **"),
+    ("const uint8_t *const *", "const uint8_t *const *"),
+    ("svbool_t", "scalable predicate mask"),
+])
+def test_intrinsic_source_type_descriptions(ctype, description):
+    assert intrinsic_source.intrinsic_type_description(ctype) == description
+
+
+def test_prepared_inputs_keep_one_vector_per_record_and_preserve_other_documents(tokenizer, monkeypatch):
+    intrinsic = intrinsic_source.prepare_intrinsic_chunk(chunk())
+    intrinsic = {**intrinsic, "original_text": intrinsic["content"]}
+    rows = [record("First guide"), intrinsic, record("Second guide"), intrinsic]
+    encoded = np.eye(384, dtype=np.float32)[[2, 0, 3, 1]]
+    model = Mock(tokenizer=tokenizer)
+    model.float.return_value = model.eval.return_value = model
+    model.encode.return_value = encoded.copy()
+    monkeypatch.setattr(vectorstore, "SentenceTransformer", lambda *args, **kwargs: model)
+    monkeypatch.setattr(torch, "set_num_interop_threads", lambda _: None)
+    vectors, metadata = vectorstore.create_embeddings(rows, "unused")
+    assert vectors.shape == (4, 384) and metadata == rows
+    np.testing.assert_array_equal(vectors, encoded)
+    assert model.encode.call_args.args[0] == [
+        "First guide", intrinsic["embedding_text"], "Second guide", intrinsic["embedding_text"],
+    ]
+
+
+def chunk(isa="Neon"):
+    return {
+        "url": "https://developer.arm.com/architectures/instruction-sets/intrinsics/#q=vaddq_u8",
+        "keywords": "vaddq_u8, neon, addition, intrinsic, SSE, avx, streaming simd extension",
+        "content": f"The intrinsic is part of the {isa} instruction set architecture. "
+        "Here is a brief intrinsic description: Add unsigned bytes.\n\n"
+        "The signature is as follows:\n`uint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b);`\n"
+        "#include <arm_sve.h>\nShared compiler advice and full pseudocode.",
+    }
+
+
+@pytest.mark.parametrize("isa,expected", [("neon", "Neon"), ("sve", "SVE"), ("sve2", "SVE2")])
+def test_normalization_assigns_scope_and_removes_shared_keywords(isa, expected):
+    raw = chunk(isa)
+    before = deepcopy(raw)
+    normalized = intrinsic_source.normalize_intrinsic_chunk(raw)
+    assert raw == before
+    assert normalized["doc_type"] == "Intrinsic"
+    assert normalized["product"] == expected
+    assert normalized["heading_path"] == [expected, "vaddq_u8"]
+    assert normalized["keywords"] == "vaddq_u8, neon, addition"
+    assert ("#include <arm_neon.h>" in normalized["content"]) == (expected == "Neon")
+
+
+def test_card_preserves_operation_and_signature_but_omits_shared_template():
+    normalized = intrinsic_source.normalize_intrinsic_chunk(chunk())
+    record = {**normalized, "original_text": normalized["content"]}
+    text = intrinsic_source.intrinsic_embedding_text(record)
+    assert text == (
+        "Neon intrinsic vaddq_u8. Operation: addition. Add unsigned bytes. "
+        "Returns: 16 lanes of 8-bit unsigned integer, 128-bit vector. "
+        "Input a: 16 lanes of 8-bit unsigned integer, 128-bit vector. "
+        "Input b: 16 lanes of 8-bit unsigned integer, 128-bit vector. "
+        "Signature: uint8x16_t vaddq_u8(uint8x16_t a, uint8x16_t b);"
+    )
+    assert "full pseudocode" in record["original_text"]
+
+
+def test_card_preserves_unexpanded_types_and_full_signature():
+    signature = "svcount_t example(enum future_pattern pattern, const int lane, mfloat8_t value);"
+    record = {"heading": "example", "product": "SVE", "keywords": "",
+              "original_text": "The signature is as follows:\n`" + signature + "`\n"}
+    text = intrinsic_source.intrinsic_embedding_text(record)
+    assert "Returns: svcount_t." in text
+    assert "Input pattern: enum future_pattern." in text
+    assert "Input lane: signed integer scalar." in text
+    assert "Input value: mfloat8_t." in text
+    assert text.endswith("Signature: " + signature)
+
+
+def test_nonintrinsic_chunk_is_unchanged():
+    raw = {"url": "https://example.com/intrinsic-guide", "content": "example"}
+    assert intrinsic_source.normalize_intrinsic_chunk(raw) is raw
+
+
+@pytest.mark.parametrize("legacy_views", [False, True])
+def test_prepared_chunks_roundtrip_without_reparsing(tmp_path, monkeypatch, gc, legacy_views):
+    source = tmp_path / "intrinsics"
+    source.mkdir()
+    monkeypatch.setenv("INTRINSIC_CHUNKS_DIR", str(source))
+    monkeypatch.setenv("YAML_DATA_DIR", str(tmp_path / "guides"))
+    raw = {**chunk(), "uuid": "a", "title": "Arm Intrinsics - vaddq_u8"}
+    if legacy_views:
+        raw["embedding_texts"] = {"compact": "stale compact text", "detailed": "stale detailed text"}
+    path = source / "chunk_a.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
+    inputs = []
+
+    def encode(metadata, *args):
+        inputs.append([r["embedding_text"] for r in metadata])
+        return np.ones((len(metadata), 384), dtype=np.float32), metadata
+
+    monkeypatch.setattr(vectorstore, "create_embeddings", encode)
+    with pytest.raises(ValueError, match="Regenerate.*acquisition"):
+        vectorstore.main()
+    assert not inputs
+    assert not (tmp_path / "metadata.json").exists()
+    gc.prepare_intrinsic_chunks()
+    prepared = path.read_text()
+    gc.prepare_intrinsic_chunks()
+    assert path.read_text() == prepared
+    record = yaml.safe_load(prepared)
+    assert record["keywords"] == "vaddq_u8, neon, addition"
+    assert isinstance(record.get("embedding_text"), str)
+    assert "16 lanes of 8-bit unsigned integer" in record["embedding_text"]
+    assert "embedding_texts" not in record
+
+    def unexpected_parse(*args):
+        raise AssertionError("Prepared chunks must not be parsed again")
+
+    monkeypatch.setattr(intrinsic_source, "normalize_intrinsic_chunk", unexpected_parse)
+    vectorstore.main()
+    assert inputs == [[record["embedding_text"]]]
+    saved = json.loads((tmp_path / "metadata.json").read_text())[0]
+    assert saved["original_text"] == record["content"]
+    assert saved["doc_type"] == "Intrinsic"
+    assert "embedding_text" not in saved
+
+
+@pytest.mark.parametrize("text", [None, "", " \t\n", 3, {"compact": "x", "detailed": "y"}])
+def test_invalid_prepared_descriptions_are_rejected(text, monkeypatch):
+    record = intrinsic_source.prepare_intrinsic_chunk(chunk())
+    record.pop("embedding_texts", None)
+    record["embedding_text"] = text
+    monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
+    monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: [record])
+    with pytest.raises(ValueError, match="Regenerate.*acquisition"):
+        vectorstore.main()
+
+
+def test_old_two_description_chunks_require_reacquisition(monkeypatch):
+    record = {**intrinsic_source.prepare_intrinsic_chunk(chunk()), "uuid": "a", "title": "Intrinsic", "chunk_uuid": "a"}
+    record.pop("embedding_text", None)
+    record["embedding_texts"] = {"compact": "old compact text", "detailed": "old detailed text"}
+    monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
+    monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: [record])
+    def unexpected_encode(*args):
+        pytest.fail("Old acquisition chunks must be rejected before encoding")
+    monkeypatch.setattr(vectorstore, "create_embeddings", unexpected_encode)
+    with pytest.raises(ValueError, match="Regenerate.*acquisition"):
+        vectorstore.main()
+
+
+@pytest.mark.parametrize("field", ["doc_type", "heading", "product"])
+def test_incomplete_intrinsic_metadata_is_rejected(field, monkeypatch):
+    record = intrinsic_source.prepare_intrinsic_chunk(chunk())
+    record.pop(field)
+    monkeypatch.setattr(sys, "argv", ["builder", "--model-path", "unused"])
+    monkeypatch.setattr(vectorstore, "load_local_yaml_files", lambda: [record])
+    with pytest.raises(ValueError, match="Regenerate.*acquisition"):
+        vectorstore.main()

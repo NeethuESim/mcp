@@ -1,4 +1,4 @@
-"""Resource sections and Dashboard identity survive deduplication and fusion."""
+"""Dashboard ranking and resource identity through deduplication and fusion."""
 
 import importlib
 from copy import deepcopy
@@ -334,3 +334,62 @@ def test_fusion_uses_public_identity_across_acquisition_sources():
 
     assert [item["metadata"]["chunk_uuid"] for item in results] == ["best", "other"]
     assert results[0]["metadata"] == items[0]["metadata"]
+
+
+def package_record(name="Redis", platform="linux", **metadata):
+    record = result(f"https://example.com/{name}", None)
+    record["metadata"].update(
+        heading=name, platform=platform, search_text=f"{name} supported on Arm {platform}", **metadata,
+    )
+    return record
+
+
+@pytest.mark.parametrize("question", [
+    "Can\tI run Redis on Arm?", "Is there Redis for Arm Linux?",
+    "Which version of Redis supports Arm Linux?", "Where should I download Redis?",
+])
+def test_support_question_prefers_package_record(question):
+    card = package_record()
+    guide = package_record(doc_type="Tutorial")
+    ranked = search_module.rerank_candidates(question, [guide, card])
+    assert ranked[0]["metadata"]["doc_type"] == "Ecosystem Dashboard"
+    assert ranked[0]["rerank_score"] > ranked[1]["rerank_score"]
+
+
+@pytest.mark.parametrize("question,name,platform,expected", [
+    ("Redis compatibility on Windows...", "Redis", "windows", .35),
+    ("Is Redis supported on Ubuntu?", "Redis", "linux", .35),
+    ("Is there support for Node.js.", "Node.js", "linux", .35),
+    ("Is there support for C++.", "C++", "linux", .35),
+    ("Can I run Redis on Windows?", "Redis", "linux", 0),
+    ("Can I run Redis on Arm?", "Redis", "windows", 0),
+    ("Is Redis supported on macOS.", "Redis", "linux", 0),
+    ("Can I run Redis on Android?", "Redis", "linux", 0),
+    ("Is Redis supported on iOS?", "Redis", "linux", 0),
+    ("Can I run Redis on Mac OS X?", "Redis", "linux", 0),
+    ("Is Redis supported on OSX?", "Redis", "linux", 0),
+    ("Can I run PostgreSQL on Arm?", "Redis", "linux", 0),
+    ("Is IDEA supported on Windows?", "IntelliJ IDEA", "windows", 0),
+    ("Is Arm supported?", "Arm", "linux", 0),
+    ("How  can I use Redis on Arm?", "Redis", "linux", 0),
+    ("Can I debug Redis on Arm Linux?", "Redis", "linux", 0),
+    ("Can I generate a Redis latency report?", "Redis", "linux", 0),
+    ("Is there a way to tune Redis latency?", "Redis", "linux", 0),
+    ("Recommend a tutorial for Redis.", "Redis", "linux", 0),
+])
+def test_dashboard_bonus_requires_support_package_and_platform(question, name, platform, expected):
+    record = package_record(name, platform)["metadata"]
+    query = search_module._analyze_query(question)
+    assert search_module._reference_record_bonus(query, record, "ecosystem dashboard") == expected
+
+
+@pytest.mark.parametrize("package,expected", [("Redis", .35), ("PostgreSQL", 0)])
+def test_dashboard_subsection_uses_package_identity(package, expected):
+    record = package_record("Features", heading_path=["Linux", package, "Features"])["metadata"]
+    query = search_module._analyze_query("Which Redis features are supported on Linux?")
+    assert search_module._reference_record_bonus(query, record, "ecosystem dashboard") == expected
+
+
+def test_legacy_metadata_gets_no_reference_bonus():
+    query = search_module._analyze_query("Is Redis supported on Linux?")
+    assert search_module._reference_record_bonus(query, {"heading": "Redis"}, "") == 0

@@ -259,3 +259,15 @@ planned `product` filter. The consumer's live integration remains disabled until
 that contract is implemented and verified. Same-name source records may disagree
 on support or minimum versions; ingestion preserves their facts and reports shared
 URLs rather than selecting an authoritative record.
+
+## Intrinsic embedding records
+
+Acquisition prepares clean intrinsic metadata and one `embedding_text` containing
+the operation, signature, and type descriptions. The builder embeds it once in
+the shared index, preserves the full source for responses, and excludes
+`embedding_text` from saved metadata.
+
+Rebuild and pin the updated toolchain, then regenerate chunks before rebuilding
+the vector store. Intrinsic chunks require prepared metadata and `embedding_text`;
+missing preparation or descriptions over 500 tokens fail the build. Publish the
+model, metadata, and index together.

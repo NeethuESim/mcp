@@ -71,5 +71,8 @@ resource rank (20%) before the candidate cutoff. The returned passage comes from
 the hybrid-selected piece, expanded to its complete original chunk when available.
 Metadata filters apply to both channels and to any refill before ranking.
 
+Intrinsic retrieval matches catalog and expanded function names, and uses the
+requested ISA and signature types to improve ranking.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md#versioning-arm-kb-search) for package
 versioning guidance.

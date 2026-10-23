@@ -1097,6 +1097,65 @@ def test_generated_prs_dispatch_required_checks_without_an_external_token() -> N
         assert workflow in REQUIRED_CHECK_DISPATCH
 
 
+@pytest.mark.parametrize(
+    "notes,gh_exit_code,expected,warning",
+    [
+        (
+            "## What's Changed\n\n- Add `search` for $HOME\n\n**Full Changelog**: "
+            "https://github.com/arm/mcp/compare/v3.4.0...v3.5.0\n",
+            0, "## What's Changed\n\n- Add `search` for $HOME", "",
+        ),
+        ("", 0, "", "Generated release notes are empty"),
+        (" \t\n  \n", 0, "", "Generated release notes are empty"),
+        ("Partial API output must be discarded\n", 1, "", "Could not generate release notes"),
+    ],
+    ids=["success", "empty", "whitespace", "api-failure"],
+)
+def test_promotion_release_notes_are_best_effort(
+    tmp_path, notes, gh_exit_code, expected, warning
+):
+    workflow = yaml.safe_load(EMBEDDING_WORKFLOW)
+    steps = workflow["jobs"]["propose-mcp-embedding-pin"]["steps"]
+    generate = next(step for step in steps if step["name"] == "Generate release notes")
+    proposal = next(step for step in steps if step["name"] == "Propose embedding pin for review")
+
+    # Replace external commands with local stubs; no GitHub credentials are needed.
+    for name, script in {
+        "gh": '#!/bin/sh\nprintf \'%s\' "$MOCK_NOTES"\nexit "$MOCK_EXIT"\n',
+        "uuidgen": "#!/bin/sh\nprintf '%s\\n' 'test-delimiter'\n",
+    }.items():
+        binary = tmp_path / name
+        binary.write_text(script)
+        binary.chmod(0o755)
+
+    env_file = tmp_path / "github-env"
+    result = subprocess.run(
+        ["bash", "-c", generate["run"]],
+        env=dict(
+            os.environ,
+            PATH=f"{tmp_path}:{os.environ['PATH']}",
+            GH_TOKEN="mock-token",
+            GITHUB_ENV=str(env_file),
+            GITHUB_REPOSITORY="arm/mcp",
+            GITHUB_SHA="b" * 40,
+            RELEASE_VERSION="3.5.0",
+            MOCK_NOTES=notes,
+            MOCK_EXIT=str(gh_exit_code),
+        ),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert ("::warning::" in result.stdout) == bool(warning)
+    assert warning in result.stdout
+    lines = env_file.read_text().splitlines()
+    name, delimiter = lines[0].split("<<", 1)
+    assert name == "RELEASE_NOTES"
+    assert lines[-1] == delimiter
+    assert "\n".join(lines[1:-1]) == expected
+    assert "${{ env.RELEASE_NOTES }}" in proposal["env"]["PR_BODY"]
+
+
 def test_version_bump_script_supports_all_release_types() -> None:
     script = REPOSITORY / ".github/scripts/bump_mcp_version.py"
     major, minor, patch = map(int, SERVER_METADATA["version"].split("."))
@@ -1238,7 +1297,7 @@ def test_toolchain_input_changes_rebuild_and_propose_pin() -> None:
 def test_embedding_toolchain_uses_fixed_python_version() -> None:
     assert (
         "ARG PYTHON_IMAGE=docker.io/library/python:3.13.16-slim@sha256:"
-        "af7e5047e10ef70882ab774f03310df7151118fe77b8e63bac5e0766c4f5cc8c"
+        "ff089de2ebe52f328c4834221097e20eae7f7e4148ea06ac42bd8440d3c79094"
         in TOOLCHAIN_DOCKERFILE
     )
     assert "assert sys.version_info[:3] == (3, 13, 16)" in TOOLCHAIN_DOCKERFILE
